@@ -1,15 +1,18 @@
 <?php
 /**
- * Plugin Name: WeatherQuery
- * Plugin URI: https://reicheltmedia.design
+ * Plugin Name: RMD WeatherQuery
+ * Plugin URI: https://github.com/reicheltmediadesign/wordpress-rmd-weatherquery
  * Description: Ein professionelles WordPress Plugin zur Anzeige von Wetterdaten über die WeatherLink v2 API. Unterstützt multiple Darstellungsmodi (Liste, Tabelle, Widget), Wetter-Icons, deutsche Lokalisierung, Temperatur-/Druckumrechnung und intelligente Caching-Funktionen. Entwickelt unter Mitwirkung von Anthropic Claude.
- * Version: 1.1.0
+ * Version: 1.2.0
+ * Requires at least: 6.0
+ * Requires PHP: 7.4
  * Author: reichelt media.design
  * Author URI: https://reicheltmedia.design
  * Author Email: info@reicheltmedia.design
  * License: GPL-2.0-or-later
  * Text Domain: rmd-weatherquery
  * Domain Path: /languages
+ * Update URI: https://github.com/reicheltmediadesign/wordpress-rmd-weatherquery
  */
 
 // Prevent direct access
@@ -18,9 +21,22 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('RMD_WQ_VERSION', '1.1.0');
+define('RMD_WQ_VERSION', '1.2.0');
 define('RMD_WQ_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('RMD_WQ_PLUGIN_URL', plugin_dir_url(__FILE__));
+
+// Automatic updates from GitHub releases. plugin-update-checker is only bundled in the release zip (vendor/).
+// It reads the update.json attached by the release workflow instead of the rate-limited GitHub API.
+if (is_readable(RMD_WQ_PLUGIN_DIR . 'vendor/autoload.php')) {
+    require RMD_WQ_PLUGIN_DIR . 'vendor/autoload.php';
+    if (class_exists('\YahnisElsts\PluginUpdateChecker\v5\PucFactory')) {
+        \YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
+            'https://github.com/reicheltmediadesign/wordpress-rmd-weatherquery/releases/latest/download/update.json',
+            __FILE__,
+            'rmd-weatherquery'
+        );
+    }
+}
 
 class RMD_WeatherQuery {
     

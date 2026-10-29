@@ -14,9 +14,11 @@ The admin interface is in German.
 
 ## Installation
 
-1. Download `rmd-weatherquery.zip` from the latest [release](https://github.com/reicheltmediadesign/wordpress-rmd-weatherquery/releases). Do not use the “Source code” downloads – their folder name differs from the plugin's.
-2. In WordPress go to Plugins → Add New → Upload Plugin, choose the zip and activate *WeatherQuery*.
+1. Download `rmd-weatherquery.zip` from the latest [release](https://github.com/reicheltmediadesign/wordpress-rmd-weatherquery/releases). Do not use the “Source code” downloads – they lack the update library and use a different folder name.
+2. In WordPress go to Plugins → Add New → Upload Plugin, choose the zip and activate *RMD WeatherQuery*.
 3. Enter the WeatherLink API key and API secret in the plugin configuration (WeatherLink account → Account information → API key v2).
+
+Later releases are offered under Dashboard → Updates like any other plugin.
 
 ## Usage
 
