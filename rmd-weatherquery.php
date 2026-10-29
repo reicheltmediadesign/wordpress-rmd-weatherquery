@@ -3,7 +3,7 @@
  * Plugin Name: WeatherQuery
  * Plugin URI: https://reicheltmedia.design
  * Description: Ein professionelles WordPress Plugin zur Anzeige von Wetterdaten über die WeatherLink v2 API. Unterstützt multiple Darstellungsmodi (Liste, Tabelle, Widget), Wetter-Icons, deutsche Lokalisierung, Temperatur-/Druckumrechnung und intelligente Caching-Funktionen. Entwickelt unter Mitwirkung von Anthropic Claude.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: reichelt media.design
  * Author URI: https://reicheltmedia.design
  * Author Email: info@reicheltmedia.design
@@ -18,7 +18,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('RMD_WQ_VERSION', '1.1');
+define('RMD_WQ_VERSION', '1.1.0');
 define('RMD_WQ_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('RMD_WQ_PLUGIN_URL', plugin_dir_url(__FILE__));
 
