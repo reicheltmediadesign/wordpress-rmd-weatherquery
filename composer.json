@@ -1,0 +1,23 @@
+{
+  "name": "reicheltmediadesign/wordpress-rmd-weatherquery",
+  "description": "WordPress plugin to display weather station data via the WeatherLink v2 API.",
+  "type": "wordpress-plugin",
+  "license": "GPL-2.0-or-later",
+  "authors": [
+    {
+      "name": "Philipp Reichelt",
+      "email": "info@reicheltmedia.design",
+      "homepage": "https://reicheltmedia.design"
+    }
+  ],
+  "require": {
+    "php": ">=7.4",
+    "yahnis-elsts/plugin-update-checker": "^5.7"
+  },
+  "config": {
+    "sort-packages": true,
+    "platform": {
+      "php": "7.4.0"
+    }
+  }
+}
