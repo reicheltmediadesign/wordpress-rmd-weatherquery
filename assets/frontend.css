@@ -1,0 +1,322 @@
+/* WeatherQuery Frontend Styles */
+
+.wq-widget {
+    border: 1px solid #e1e5e9;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 20px 0;
+    background-color: #ffffff;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+.wq-title {
+    margin-top: 0;
+    margin-bottom: 15px;
+    color: #2c3e50;
+    font-size: 1.4em;
+    font-weight: 600;
+    border-bottom: 2px solid #3498db;
+    padding-bottom: 8px;
+}
+
+.wq-error {
+    color: #e74c3c;
+    background-color: #fdf2f2;
+    border: 1px solid #f5c6c6;
+    padding: 12px;
+    border-radius: 4px;
+    margin: 10px 0;
+}
+
+.wq-timestamp {
+    font-size: 0.85em;
+    color: #7f8c8d;
+    text-align: right;
+    margin-top: 15px;
+    font-style: italic;
+}
+
+/* Standard Template */
+.wq-template-default .wq-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid #ecf0f1;
+}
+
+.wq-template-default .wq-item:last-child {
+    border-bottom: none;
+}
+
+.wq-template-default .wq-label {
+    font-weight: 500;
+    color: #34495e;
+}
+
+.wq-template-default .wq-value {
+    font-weight: 600;
+    color: #2980b9;
+}
+
+/* Tabellen Template */
+.wq-template-table .wq-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0;
+}
+
+.wq-template-table .wq-table td {
+    padding: 10px 15px;
+    border-bottom: 1px solid #ecf0f1;
+}
+
+.wq-template-table .wq-table td:first-child {
+    font-weight: 500;
+    color: #34495e;
+    background-color: #f8f9fa;
+}
+
+.wq-template-table .wq-table td:last-child {
+    font-weight: 600;
+    color: #2980b9;
+    text-align: right;
+}
+
+.wq-template-table .wq-table tr:hover {
+    background-color: #f1f3f4;
+}
+
+/* Listen Template */
+.wq-template-list .wq-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.wq-template-list .wq-list li {
+    padding: 10px 0;
+    border-bottom: 1px solid #ecf0f1;
+    display: flex;
+    align-items: center;
+}
+
+.wq-template-list .wq-list li:last-child {
+    border-bottom: none;
+}
+
+.wq-template-list .wq-list li:before {
+    content: "•";
+    color: #3498db;
+    font-size: 1.2em;
+    margin-right: 10px;
+    font-weight: bold;
+}
+
+.wq-template-list .wq-list strong {
+    color: #34495e;
+    margin-right: 8px;
+}
+
+/* Karten Template */
+.wq-template-card .wq-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+    margin: 0;
+}
+
+.wq-template-card .wq-card {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 20px;
+    border-radius: 12px;
+    text-align: center;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.wq-template-card .wq-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+}
+
+.wq-template-card .wq-card-label {
+    font-size: 0.9em;
+    opacity: 0.9;
+    margin-bottom: 8px;
+    font-weight: 400;
+}
+
+.wq-template-card .wq-card-value {
+    font-size: 1.8em;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .wq-widget {
+        padding: 15px;
+        margin: 15px 0;
+    }
+    
+    .wq-template-default .wq-item {
+        flex-direction: column;
+        align-items: flex-start;
+        text-align: left;
+    }
+    
+    .wq-template-default .wq-value {
+        margin-top: 5px;
+        font-size: 1.1em;
+    }
+    
+    .wq-template-table .wq-table,
+    .wq-template-table .wq-table td {
+        font-size: 0.9em;
+    }
+    
+    .wq-template-table .wq-table td {
+        padding: 8px 10px;
+    }
+    
+    .wq-template-card .wq-cards {
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 10px;
+    }
+    
+    .wq-template-card .wq-card {
+        padding: 15px;
+    }
+    
+    .wq-template-card .wq-card-value {
+        font-size: 1.5em;
+    }
+}
+
+@media (max-width: 480px) {
+    .wq-widget {
+        padding: 12px;
+        margin: 10px 0;
+    }
+    
+    .wq-title {
+        font-size: 1.2em;
+    }
+    
+    .wq-template-card .wq-cards {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Dark Mode Support */
+@media (prefers-color-scheme: dark) {
+    .wq-widget {
+        background-color: #2c3e50;
+        border-color: #34495e;
+        color: #ecf0f1;
+    }
+    
+    .wq-title {
+        color: #ecf0f1;
+        border-color: #3498db;
+    }
+    
+    .wq-template-default .wq-item {
+        border-color: #34495e;
+    }
+    
+    .wq-template-default .wq-label {
+        color: #bdc3c7;
+    }
+    
+    .wq-template-default .wq-value {
+        color: #5dade2;
+    }
+    
+    .wq-template-table .wq-table td {
+        border-color: #34495e;
+    }
+    
+    .wq-template-table .wq-table td:first-child {
+        background-color: #34495e;
+        color: #bdc3c7;
+    }
+    
+    .wq-template-table .wq-table td:last-child {
+        color: #5dade2;
+    }
+    
+    .wq-template-table .wq-table tr:hover {
+        background-color: #34495e;
+    }
+    
+    .wq-template-list .wq-list li {
+        border-color: #34495e;
+    }
+    
+    .wq-template-list .wq-list strong {
+        color: #bdc3c7;
+    }
+    
+    .wq-timestamp {
+        color: #95a5a6;
+    }
+}
+
+/* Animationen */
+.wq-widget {
+    animation: fadeInUp 0.5s ease-out;
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.wq-template-default .wq-item {
+    transition: background-color 0.2s ease;
+}
+
+.wq-template-default .wq-item:hover {
+    background-color: #f8f9fa;
+}
+
+@media (prefers-color-scheme: dark) {
+    .wq-template-default .wq-item:hover {
+        background-color: #34495e;
+    }
+}
+
+/* Accessibility */
+.wq-widget:focus-within {
+    outline: 2px solid #3498db;
+    outline-offset: 2px;
+}
+
+.wq-template-card .wq-card {
+    cursor: default;
+}
+
+/* Print Styles */
+@media print {
+    .wq-widget {
+        box-shadow: none;
+        border: 1px solid #000;
+        break-inside: avoid;
+    }
+    
+    .wq-template-card .wq-card {
+        background: white !important;
+        color: black !important;
+        border: 1px solid #000;
+    }
+}
