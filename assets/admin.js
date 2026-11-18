@@ -364,4 +364,41 @@ jQuery(document).ready(function($) {
         });
     });
 
+    // Save station ID used by [wq_header]
+    $("#save-header-station").on("click", function() {
+        var button = $(this);
+        var resultsDiv = $("#header-station-result");
+        var originalText = button.text();
+
+        button.prop("disabled", true).text(rmd_wq_ajax.strings.loading);
+
+        $.ajax({
+            url: rmd_wq_ajax.ajax_url,
+            type: "POST",
+            data: {
+                action: "rmd_wq_save_header_station",
+                nonce: rmd_wq_ajax.nonce,
+                station_id: $("#header_station_id").val()
+            },
+            success: function(response) {
+                var html = '';
+                if (response.success) {
+                    html = '<div style="padding: 10px; background: #dff0d8; border-left: 4px solid #5cb85c;">';
+                    html += '<strong>✓</strong> ' + escapeHtml(response.data.message);
+                } else {
+                    html = '<div style="padding: 10px; background: #f2dede; border-left: 4px solid #d9534f;">';
+                    html += '<strong>✗ Fehler</strong><br>' + escapeHtml(response.data);
+                }
+                html += '</div>';
+                resultsDiv.html(html);
+            },
+            error: function() {
+                resultsDiv.html('<div style="padding: 10px; background: #f2dede; border-left: 4px solid #d9534f;">AJAX-Fehler beim Speichern der Stations-ID</div>');
+            },
+            complete: function() {
+                button.prop("disabled", false).text(originalText);
+            }
+        });
+    });
+
 });
