@@ -51,6 +51,10 @@ jQuery(document).ready(function($) {
         });
     });
     
+    function escapeHtml(value) {
+        return $("<div>").text(String(value)).html();
+    }
+
     function displayStations(stations) {
         var container = $("#stations-container");
         container.empty();
@@ -69,7 +73,13 @@ jQuery(document).ready(function($) {
                 html += "<p>Standort: " + station.location + "</p>";
             }
             if (station.device_model) {
-                html += "<p><strong>Gerät:</strong> " + station.device_model + "</p>";
+                html += "<p><strong>Gerät:</strong> " + escapeHtml(station.device_model) + "</p>";
+            }
+            if (station.gateway_model && station.gateway_model !== station.device_model) {
+                html += "<p><strong>Gateway:</strong> " + escapeHtml(station.gateway_model) + "</p>";
+            }
+            if (station.sensor_models && station.sensor_models.length) {
+                html += "<p><strong>Sensoren:</strong> " + escapeHtml(station.sensor_models.join(", ")) + "</p>";
             }
             html += "<button type=\"button\" class=\"button button-primary select-station\">Station auswählen</button>";
             html += "</div>";

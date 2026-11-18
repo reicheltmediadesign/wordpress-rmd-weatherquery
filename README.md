@@ -41,9 +41,21 @@ Later releases are offered under Dashboard → Updates like any other plugin.
 
 The shortcode generator in the admin builds the shortcode for you.
 
+### Block
+
+The **WeatherQuery** block (category Widgets) offers everything the shortcode does in the block sidebar, with a live preview in the editor. The station is picked from a list and the field list shows only the fields the station actually delivers. On top of the shortcode it offers:
+
+- field order and custom labels per field
+- heading with selectable level
+- fixed number of columns, plain tiles, hidden labels and a tile background colour (widget mode)
+- block colours, spacing, font size and wide/full alignment
+- caching of the weather data per block (default 5 minutes)
+
+Requires WordPress 6.3 or newer.
+
 ## Privacy
 
-The server requests data from `api.weatherlink.com`. The weather icon font is loaded from `cdnjs.cloudflare.com`, so visitors' browsers connect to that CDN. API credentials stay on the server and are never output to the page.
+The server requests data from `api.weatherlink.com`. The [Weather Icons](https://erikflowers.github.io/weather-icons/) font is bundled with the plugin, so visitors' browsers do not connect to any third-party server. API credentials stay on the server and are never output to the page.
 
 ## License
 
