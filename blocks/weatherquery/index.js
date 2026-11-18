@@ -26,23 +26,6 @@
 		{ value: 'rainfall', label: 'Niederschlag' }
 	];
 
-	function toLocalInput(timestamp) {
-		if (!timestamp) {
-			return '';
-		}
-		var d = new Date(timestamp * 1000);
-		var pad = function (n) { return (n < 10 ? '0' : '') + n; };
-		return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
-	}
-
-	function fromLocalInput(value) {
-		if (!value) {
-			return 0;
-		}
-		var time = new Date(value).getTime();
-		return isNaN(time) ? 0 : Math.floor(time / 1000);
-	}
-
 	function useStations() {
 		var state = useState({ loading: true, stations: [], error: '' });
 		var setState = state[1];
@@ -176,7 +159,10 @@
 		var stations = useStations();
 		var fields = useFields(attributes.stationId);
 		var blockProps = be.useBlockProps();
-		var isWidget = attributes.displayMode === 'widget';
+		var isArchive = attributes.mode === 'archive';
+		var isWidget = !isArchive && attributes.displayMode === 'widget';
+		// Archive views other than single readings have fixed columns.
+		var showFieldChoice = !isArchive || attributes.archiveView === 'readings';
 
 		var stationOptions = [{ value: 0, label: __('– Station wählen –', TEXT_DOMAIN) }].concat(
 			stations.stations.map(function (s) {
@@ -205,36 +191,62 @@
 				value: attributes.mode,
 				options: [
 					{ value: 'current', label: __('Aktuelle Bedingungen', TEXT_DOMAIN) },
-					{ value: 'historic', label: __('Historische Daten', TEXT_DOMAIN) }
+					{ value: 'archive', label: __('Archiv (eigene Aufzeichnung)', TEXT_DOMAIN) }
 				],
 				onChange: function (value) { setAttributes({ mode: value }); }
 			}),
-			attributes.mode === 'historic' ? el(Fragment, null,
-				el(c.TextControl, {
+			isArchive ? el(Fragment, null,
+				el(c.SelectControl, {
 					__nextHasNoMarginBottom: true,
 					__next40pxDefaultSize: true,
-					type: 'datetime-local',
-					label: __('Von', TEXT_DOMAIN),
-					value: toLocalInput(attributes.startTimestamp),
-					onChange: function (value) { setAttributes({ startTimestamp: fromLocalInput(value) }); }
+					label: __('Ansicht', TEXT_DOMAIN),
+					value: attributes.archiveView,
+					options: [
+						{ value: 'daily', label: __('Tageswerte (Tabelle)', TEXT_DOMAIN) },
+						{ value: 'chart', label: __('Diagramm Temperatur/Niederschlag', TEXT_DOMAIN) },
+						{ value: 'readings', label: __('Einzelmessungen eines Tages', TEXT_DOMAIN) },
+						{ value: 'monthly', label: __('Monatsübersicht', TEXT_DOMAIN) }
+					],
+					onChange: function (value) { setAttributes({ archiveView: value }); }
 				}),
-				el(c.TextControl, {
+				attributes.archiveView === 'daily' || attributes.archiveView === 'chart' ? el(c.SelectControl, {
 					__nextHasNoMarginBottom: true,
 					__next40pxDefaultSize: true,
-					type: 'datetime-local',
-					label: __('Bis', TEXT_DOMAIN),
-					help: __('Die WeatherLink-API liefert höchstens 24 Stunden pro Abfrage.', TEXT_DOMAIN),
-					value: toLocalInput(attributes.endTimestamp),
-					onChange: function (value) { setAttributes({ endTimestamp: fromLocalInput(value) }); }
-				})
+					label: __('Zeitraum', TEXT_DOMAIN),
+					value: attributes.archiveDays,
+					options: [
+						{ value: 7, label: __('7 Tage', TEXT_DOMAIN) },
+						{ value: 30, label: __('30 Tage', TEXT_DOMAIN) },
+						{ value: 90, label: __('90 Tage', TEXT_DOMAIN) },
+						{ value: 365, label: __('1 Jahr', TEXT_DOMAIN) }
+					],
+					onChange: function (value) { setAttributes({ archiveDays: parseInt(value, 10) || 30 }); }
+				}) : null,
+				attributes.archiveView === 'readings' ? el(c.TextControl, {
+					__nextHasNoMarginBottom: true,
+					__next40pxDefaultSize: true,
+					type: 'date',
+					label: __('Tag', TEXT_DOMAIN),
+					help: __('Leer = heute', TEXT_DOMAIN),
+					value: attributes.archiveDate,
+					onChange: function (value) { setAttributes({ archiveDate: value || '' }); }
+				}) : null,
+				attributes.archiveView !== 'monthly' ? el(c.ToggleControl, {
+					__nextHasNoMarginBottom: true,
+					label: attributes.archiveView === 'readings'
+						? __('Besucher können den Tag wählen', TEXT_DOMAIN)
+						: __('Besucher können den Zeitraum wählen', TEXT_DOMAIN),
+					checked: attributes.archiveSelectable,
+					onChange: function (value) { setAttributes({ archiveSelectable: value }); }
+				}) : null
 			) : null,
-			el(c.ToggleControl, {
+			showFieldChoice ? el(c.ToggleControl, {
 				__nextHasNoMarginBottom: true,
 				label: __('Alle verfügbaren Felder anzeigen', TEXT_DOMAIN),
 				checked: attributes.showAllFields,
 				onChange: function (value) { setAttributes({ showAllFields: value }); }
-			}),
-			!attributes.showAllFields ? el(Fragment, null,
+			}) : null,
+			showFieldChoice && !attributes.showAllFields ? el(Fragment, null,
 				fields.loading ? el(c.Spinner) : null,
 				fields.error ? el(c.Notice, { status: 'warning', isDismissible: false }, fields.error) : null,
 				el('p', { className: 'components-base-control__help' }, __('Reihenfolge per Pfeil ändern, Beschriftung optional überschreiben.', TEXT_DOMAIN)),
@@ -269,7 +281,7 @@
 				options: [2, 3, 4, 5, 6].map(function (n) { return { value: n, label: 'H' + n }; }),
 				onChange: function (value) { setAttributes({ titleLevel: parseInt(value, 10) }); }
 			}) : null,
-			el(c.SelectControl, {
+			!isArchive ? el(c.SelectControl, {
 				__nextHasNoMarginBottom: true,
 				__next40pxDefaultSize: true,
 				label: __('Darstellungsart', TEXT_DOMAIN),
@@ -280,7 +292,7 @@
 					{ value: 'table', label: __('Tabelle', TEXT_DOMAIN) }
 				],
 				onChange: function (value) { setAttributes({ displayMode: value }); }
-			}),
+			}) : null,
 			isWidget ? el(c.RangeControl, {
 				__nextHasNoMarginBottom: true,
 				__next40pxDefaultSize: true,
@@ -308,12 +320,12 @@
 				checked: attributes.showIcons,
 				onChange: function (value) { setAttributes({ showIcons: value }); }
 			}),
-			el(c.ToggleControl, {
+			!isArchive ? el(c.ToggleControl, {
 				__nextHasNoMarginBottom: true,
 				label: __('Zeitstempel anzeigen', TEXT_DOMAIN),
 				checked: attributes.showTimestamp,
 				onChange: function (value) { setAttributes({ showTimestamp: value }); }
-			})
+			}) : null
 		);
 
 		var colorSettings = [];
@@ -351,7 +363,7 @@
 		);
 
 		return el(Fragment, null,
-			el(be.InspectorControls, null, stationPanel, dataPanel, layoutPanel, colorPanel, advancedPanel),
+			el(be.InspectorControls, null, stationPanel, dataPanel, layoutPanel, colorPanel, isArchive ? null : advancedPanel),
 			el('div', blockProps,
 				el(ServerSideRender, {
 					block: 'rmd-weatherquery/weather',

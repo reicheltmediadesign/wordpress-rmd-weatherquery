@@ -3,7 +3,7 @@
  * Plugin Name: RMD WeatherQuery
  * Plugin URI: https://github.com/reicheltmediadesign/wordpress-rmd-weatherquery
  * Description: Ein professionelles WordPress Plugin zur Anzeige von Wetterdaten über die WeatherLink v2 API. Unterstützt multiple Darstellungsmodi (Liste, Tabelle, Widget), Wetter-Icons, deutsche Lokalisierung, Temperatur-/Druckumrechnung und intelligente Caching-Funktionen. Entwickelt unter Mitwirkung von Anthropic Claude.
- * Version: 1.3.1
+ * Version: 1.4.0
  * Requires at least: 6.3
  * Requires PHP: 7.4
  * Author: reichelt media.design
@@ -21,7 +21,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('RMD_WQ_VERSION', '1.3.1');
+define('RMD_WQ_VERSION', '1.4.0');
 define('RMD_WQ_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('RMD_WQ_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -39,7 +39,30 @@ if (is_readable(RMD_WQ_PLUGIN_DIR . 'vendor/autoload.php')) {
 }
 
 class RMD_WeatherQuery {
-    
+
+    const ARCHIVE_EVENT = 'rmd_wq_archive_event';
+    const ARCHIVE_SCHEDULE = 'rmd_wq_five_minutes';
+
+    /**
+     * Archive column => [API field, plugin field used for label and formatting].
+     * Values are stored in the API's units (°F, mph, inHg, in) like everywhere else in the plugin.
+     */
+    const ARCHIVE_COLUMNS = array(
+        'temp'       => array('temp', 'temp'),
+        'hum'        => array('hum', 'humidity'),
+        'dew_point'  => array('dew_point', 'dew_point'),
+        'bar'        => array('bar_sea_level', 'pressure'),
+        'wind_speed' => array('wind_speed_last', 'wind_speed'),
+        'wind_avg'   => array('wind_speed_avg_last_10_min', 'wind_speed_avg'),
+        'wind_gust'  => array('wind_speed_hi_last_10_min', 'wind_gust'),
+        'wind_dir'   => array('wind_dir_last', 'wind_dir'),
+        'rain_day'   => array('rainfall_daily_in', 'rainfall'),
+        'rain_15'    => array('rainfall_last_15_min_in', 'rain_15_min'),
+        'rain_rate'  => array('rain_rate_hi_last_15_min_in', 'rain_rate'),
+        'solar_rad'  => array('solar_rad', 'solar_rad'),
+        'uv_index'   => array('uv_index', 'uv_index')
+    );
+
     private $options;
     
     public function __construct() {
@@ -59,6 +82,11 @@ class RMD_WeatherQuery {
         add_action('wp_ajax_rmd_wq_refresh_cache', array($this, 'ajax_refresh_cache'));
         add_action('wp_ajax_rmd_wq_clear_cache', array($this, 'ajax_clear_cache'));
         add_action('wp_ajax_rmd_wq_save_header_station', array($this, 'ajax_save_header_station'));
+        add_action('wp_ajax_rmd_wq_archive_now', array($this, 'ajax_archive_now'));
+
+        // Weather archive: WP-Cron polls WeatherLink, readings are stored in our own table
+        add_filter('cron_schedules', array($this, 'add_cron_schedule'));
+        add_action(self::ARCHIVE_EVENT, array($this, 'run_archive'));
 
         register_activation_hook(__FILE__, array($this, 'activate'));
         register_deactivation_hook(__FILE__, array($this, 'deactivate'));
@@ -70,6 +98,9 @@ class RMD_WeatherQuery {
         load_plugin_textdomain('rmd-weatherquery', false, dirname(plugin_basename(__FILE__)) . '/languages');
         $this->maybe_upgrade();
         $this->register_frontend_styles();
+        if (!wp_next_scheduled(self::ARCHIVE_EVENT)) {
+            wp_schedule_event(time() + 60, self::ARCHIVE_SCHEDULE, self::ARCHIVE_EVENT);
+        }
         register_block_type(RMD_WQ_PLUGIN_DIR . 'blocks/weatherquery', array(
             'render_callback' => array($this, 'render_block')
         ));
@@ -84,6 +115,7 @@ class RMD_WeatherQuery {
             return;
         }
         $this->create_cache_table();
+        $this->create_archive_table();
         update_option('rmd_weatherquery_db_version', RMD_WQ_VERSION);
     }
     
@@ -100,6 +132,50 @@ class RMD_WeatherQuery {
 
         // Create cache table
         $this->create_cache_table();
+        $this->create_archive_table();
+    }
+
+    /**
+     * One row per station reading (WeatherLink Basic: every 15 minutes). `day` is the station's
+     * local date, so daily aggregates match the station's own daily rain counter.
+     */
+    private function create_archive_table() {
+        global $wpdb;
+
+        $table_name = $this->archive_table();
+        $charset_collate = $wpdb->get_charset_collate();
+
+        $value_columns = '';
+        foreach (array_keys(self::ARCHIVE_COLUMNS) as $column) {
+            $value_columns .= "            $column float DEFAULT NULL,\n";
+        }
+
+        $sql = "CREATE TABLE $table_name (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            station_id int(10) unsigned NOT NULL,
+            ts int(10) unsigned NOT NULL,
+            day date NOT NULL,
+$value_columns            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY  (id),
+            UNIQUE KEY station_ts (station_id,ts),
+            KEY station_day (station_id,day)
+        ) $charset_collate;";
+
+        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+        dbDelta($sql);
+    }
+
+    private function archive_table() {
+        global $wpdb;
+        return $wpdb->prefix . 'rmd_weatherquery_archive';
+    }
+
+    public function add_cron_schedule($schedules) {
+        $schedules[self::ARCHIVE_SCHEDULE] = array(
+            'interval' => 5 * MINUTE_IN_SECONDS,
+            'display' => __('Alle 5 Minuten (WeatherQuery)', 'rmd-weatherquery')
+        );
+        return $schedules;
     }
 
     private function create_cache_table() {
@@ -124,7 +200,7 @@ class RMD_WeatherQuery {
     }
     
     public function deactivate() {
-        // Cleanup if needed
+        wp_clear_scheduled_hook(self::ARCHIVE_EVENT);
     }
     
     public function add_admin_menu() {
@@ -203,7 +279,7 @@ class RMD_WeatherQuery {
 
         add_settings_field(
             'default_sensor_id',
-            __('Standard Sensor-ID', 'rmd-weatherquery'),
+            __('Archiv-Station', 'rmd-weatherquery'),
             array($this, 'default_sensor_id_callback'),
             'rmd_weatherquery',
             'rmd_weatherquery_section'
@@ -262,7 +338,7 @@ class RMD_WeatherQuery {
     public function default_sensor_id_callback() {
         $value = isset($this->options['default_sensor_id']) ? $this->options['default_sensor_id'] : '';
         echo '<input type="text" name="rmd_weatherquery_options[default_sensor_id]" value="' . esc_attr($value) . '" class="regular-text" />';
-        echo '<p class="description">' . __('Standard Sensor-ID für historische Datenabfragen (wird vom [wq_archive] Shortcode verwendet)', 'rmd-weatherquery') . '</p>';
+        echo '<p class="description">' . __('Stations-ID, die [wq_archive] ohne station_id anzeigt. Leer lassen, um die Header-Station zu verwenden. Archiviert werden immer alle Stationen des Kontos.', 'rmd-weatherquery') . '</p>';
     }
 
     public function admin_page() {
@@ -485,6 +561,34 @@ class RMD_WeatherQuery {
                                     <div id="cache-results" style="margin-top: 15px;"></div>
                                 </div>
                             </div>
+
+                            <!-- Weather Archive Section -->
+                            <?php $archive = $this->get_archive_summary(); ?>
+                            <div class="postbox">
+                                <h2 class="hndle"><span><?php _e('Wetterarchiv', 'rmd-weatherquery'); ?></span></h2>
+                                <div class="inside">
+                                    <p><?php _e('Das Plugin ruft alle 5 Minuten die aktuellen Werte aller Stationen ab und speichert jede neue Messung. Ausgabe mit [wq_archive] oder dem Block im Modus „Archiv“.', 'rmd-weatherquery'); ?></p>
+                                    <table class="widefat striped" style="max-width: 720px;">
+                                        <tbody>
+                                            <tr><th><?php _e('Gespeicherte Messungen', 'rmd-weatherquery'); ?></th><td><?php echo esc_html(number_format_i18n($archive['count'])); ?></td></tr>
+                                            <tr><th><?php _e('Zeitraum', 'rmd-weatherquery'); ?></th><td><?php echo $archive['count'] ? esc_html(wp_date('d.m.Y H:i', $archive['first']) . ' – ' . wp_date('d.m.Y H:i', $archive['last'])) : '–'; ?></td></tr>
+                                            <tr><th><?php _e('Letzter Abruf', 'rmd-weatherquery'); ?></th><td><?php echo $archive['last_run'] ? esc_html(wp_date('d.m.Y H:i:s', $archive['last_run'])) : esc_html__('noch nie', 'rmd-weatherquery'); ?></td></tr>
+                                            <tr><th><?php _e('Nächster geplanter Abruf', 'rmd-weatherquery'); ?></th><td><?php echo $archive['next_run'] ? esc_html(wp_date('d.m.Y H:i:s', $archive['next_run'])) : esc_html__('nicht geplant', 'rmd-weatherquery'); ?></td></tr>
+                                            <?php if ($archive['error']): ?>
+                                            <tr><th><?php _e('Letzter Fehler', 'rmd-weatherquery'); ?></th><td style="color: #d63638;"><?php echo esc_html($archive['error']); ?></td></tr>
+                                            <?php endif; ?>
+                                        </tbody>
+                                    </table>
+                                    <p class="description" style="margin-top: 10px;">
+                                        <?php _e('WP-Cron läuft nur bei Seitenaufrufen. Für eine lückenlose Aufzeichnung diese Adresse alle 5 Minuten von außen aufrufen lassen:', 'rmd-weatherquery'); ?><br>
+                                        <code><?php echo esc_html(site_url('wp-cron.php?doing_wp_cron')); ?></code>
+                                    </p>
+                                    <p>
+                                        <button type="button" id="archive-now" class="button button-secondary"><?php _e('Jetzt abrufen und archivieren', 'rmd-weatherquery'); ?></button>
+                                    </p>
+                                    <div id="archive-results"></div>
+                                </div>
+                            </div>
                             <?php endif; ?>
 
                         </div>
@@ -498,6 +602,22 @@ class RMD_WeatherQuery {
     private function is_configured() {
         return !empty($this->options['api_key']) && !empty($this->options['api_secret']);
     }
+
+    private function get_archive_summary() {
+        global $wpdb;
+        $table = $this->archive_table();
+        $row = $wpdb->get_row("SELECT COUNT(*) AS count, MIN(ts) AS first, MAX(ts) AS last FROM $table", ARRAY_A);
+        $status = get_option('rmd_weatherquery_archive_status', array());
+
+        return array(
+            'count' => $row ? (int) $row['count'] : 0,
+            'first' => $row ? (int) $row['first'] : 0,
+            'last' => $row ? (int) $row['last'] : 0,
+            'last_run' => isset($status['last_run']) ? (int) $status['last_run'] : 0,
+            'error' => isset($status['error']) ? $status['error'] : '',
+            'next_run' => wp_next_scheduled(self::ARCHIVE_EVENT)
+        );
+    }
     
     public function enqueue_scripts() {
         wp_enqueue_style('weather-icons');
@@ -510,6 +630,10 @@ class RMD_WeatherQuery {
     private function register_frontend_styles() {
         // Weather Icons are bundled locally so visitors' browsers do not contact a CDN.
         wp_register_style('weather-icons', RMD_WQ_PLUGIN_URL . 'assets/weather-icons/css/weather-icons.min.css', array(), '2.0.12');
+
+        // Chart.js is bundled as well; both scripts are only enqueued when an archive chart is rendered.
+        wp_register_script('rmd-wq-chartjs', RMD_WQ_PLUGIN_URL . 'assets/chartjs/chart.umd.min.js', array(), '4.4.1', true);
+        wp_register_script('rmd-wq-archive-chart', RMD_WQ_PLUGIN_URL . 'assets/archive-chart.js', array('rmd-wq-chartjs'), RMD_WQ_VERSION, true);
 
         // Add basic styling for our display modes and admin menu icon
         wp_add_inline_style('weather-icons', '
@@ -661,6 +785,40 @@ class RMD_WeatherQuery {
                 padding: 12px;
                 border: 1px dashed #c3c4c7;
                 color: #50575e;
+            }
+            .rmd-wq-archive-controls {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 8px 12px;
+                margin-bottom: 12px;
+            }
+            .rmd-wq-archive-controls select,
+            .rmd-wq-archive-controls input[type="date"] {
+                margin-left: 4px;
+            }
+            .rmd-wq-archive-nav {
+                text-decoration: none;
+                font-size: 1.4em;
+                line-height: 1;
+                padding: 0 6px;
+            }
+            .rmd-wq-archive-range {
+                color: #6c757d;
+                font-size: 0.9em;
+            }
+            .rmd-wq-archive .rmd-wq-weather-table td,
+            .rmd-wq-archive .rmd-wq-weather-table th {
+                white-space: nowrap;
+            }
+            .rmd-wq-chart-canvas {
+                position: relative;
+                width: 100%;
+                height: 360px;
+            }
+            .rmd-wq-archive-empty {
+                color: #6c757d;
+                font-style: italic;
             }
             .rmd-wq-timestamp {
                 margin-top: 10px;
@@ -1213,348 +1371,407 @@ class RMD_WeatherQuery {
         return $output;
     }
 
+    /**
+     * [wq_archive] renders readings stored by the plugin itself (see run_archive()).
+     * Views: daily (one row per day), monthly, readings (all readings of one day), chart.
+     */
     public function weather_archive_shortcode($atts) {
         $atts = shortcode_atts(array(
-            'sensor_id' => '',
-            'start_timestamp' => '',
-            'end_timestamp' => '',
-            'start_date' => '', // Format: YYYY-MM-DD HH:MM
-            'end_date' => '', // Format: YYYY-MM-DD HH:MM
-            'days' => '7', // Default: letzte 7 Tage
-            'fields' => 'temp,humidity,wind_speed,rainfall',
-            'display_mode' => 'table', // list, table, widget, chart
+            'station_id' => '',
+            'sensor_id' => '', // name used before 1.4.0, holds a station ID
+            'view' => 'daily',
+            'days' => '30',
+            'start_date' => '',
+            'end_date' => '',
+            'date' => '',
+            'fields' => '',
             'show_icons' => 'false',
             'icon_color' => '#62C626',
-            'show_timestamp' => 'true',
             'temperature_unit' => 'celsius',
-            'show_all_fields' => 'false',
-            'aggregate' => 'none' // none, daily, hourly
+            'selectable' => 'true'
         ), $atts, 'wq_archive');
 
         if (!$this->is_configured()) {
-            return '<div class="rmd-wq-error">' . __('WeatherQuery Plugin nicht konfiguriert', 'rmd-weatherquery') . '</div>';
+            return '<div class="rmd-wq-error">' . esc_html__('WeatherQuery Plugin nicht konfiguriert', 'rmd-weatherquery') . '</div>';
         }
 
-        // Determine sensor_id
-        if (empty($atts['sensor_id'])) {
-            if (!empty($this->options['default_sensor_id'])) {
-                $atts['sensor_id'] = $this->options['default_sensor_id'];
-            } else {
-                return '<div class="rmd-wq-error">' . __('Sensor-ID erforderlich. Bitte konfigurieren Sie eine Standard-Sensor-ID in den WeatherQuery Einstellungen oder übergeben Sie sensor_id als Parameter.', 'rmd-weatherquery') . '</div>';
-            }
-        }
-
-        // Determine timestamps
-        if (empty($atts['start_timestamp']) && empty($atts['start_date'])) {
-            // Use days parameter to calculate start timestamp
-            $days = intval($atts['days']);
-            if ($days <= 0) $days = 7;
-            $atts['start_timestamp'] = strtotime("-{$days} days");
-            $atts['end_timestamp'] = time();
-        } else if (!empty($atts['start_date'])) {
-            // Convert date strings to timestamps
-            $atts['start_timestamp'] = strtotime($atts['start_date']);
-            if (!empty($atts['end_date'])) {
-                $atts['end_timestamp'] = strtotime($atts['end_date']);
-            } else {
-                $atts['end_timestamp'] = time();
-            }
-        }
-
-        // Validate timestamps
-        if (empty($atts['start_timestamp']) || empty($atts['end_timestamp'])) {
-            return '<div class="rmd-wq-error">' . __('Ungültige Zeitangaben', 'rmd-weatherquery') . '</div>';
-        }
-
-        // Get historic data
-        $data = $this->get_historic_data($atts['sensor_id'], $atts['start_timestamp'], $atts['end_timestamp']);
-
-        if ($data === false) {
-            return '<div class="rmd-wq-error">' . __('Fehler beim Laden der historischen Daten', 'rmd-weatherquery') . '</div>';
-        }
-
-        if (is_array($data) && isset($data['error'])) {
-            $error_message = $data['error'];
-            if ($this->debug_mode_enabled() && isset($data['debug'])) {
-                $error_message .= "\n\nDebug: " . print_r($data['debug'], true);
-            }
-            return '<div class="rmd-wq-error">' . esc_html($error_message) . '</div>';
-        }
-
-        return $this->format_historic_data($data, $atts);
+        return $this->render_archive($atts);
     }
 
-    private function get_historic_data($sensor_id, $start_timestamp, $end_timestamp) {
-        if (!$this->is_configured()) {
-            return $this->debug_mode_enabled() ?
-                array('error' => 'Plugin nicht konfiguriert: API Key oder Secret fehlt') :
-                false;
+    private function render_archive($atts) {
+        $station_id = $this->resolve_archive_station($atts);
+        if (!$station_id) {
+            return '<div class="rmd-wq-error">' . esc_html__('Keine Station für das Wetterarchiv gefunden. Bitte station_id angeben oder eine Header-Station in den WeatherQuery-Einstellungen festlegen.', 'rmd-weatherquery') . '</div>';
         }
 
-        // Build URL for historic endpoint
-        $base_url = rtrim($this->options['base_url'], '/');
-        $url = $base_url . '/historic/' . urlencode($sensor_id);
-        $url .= '?api-key=' . urlencode($this->options['api_key']);
-        $url .= '&start-timestamp=' . intval($start_timestamp);
-        $url .= '&end-timestamp=' . intval($end_timestamp);
+        $view = in_array($atts['view'], array('daily', 'monthly', 'readings', 'chart'), true) ? $atts['view'] : 'daily';
+        $selectable = strtolower((string) $atts['selectable']) !== 'false';
+        $first_day = $this->get_archive_first_day($station_id);
 
-        $args = array(
-            'headers' => array(
-                'X-API-SECRET' => $this->options['api_secret']
-            ),
-            'timeout' => 60 // Longer timeout for historic data
-        );
-
-        // Debug info
-        if ($this->debug_mode_enabled()) {
-            $debug_info = array(
-                'url' => $url,
-                'headers' => $args['headers'],
-                'method' => 'GET',
-                'start_timestamp' => $start_timestamp,
-                'end_timestamp' => $end_timestamp,
-                'sensor_id' => $sensor_id
-            );
+        if ($first_day === null) {
+            return '<div class="rmd-wq-data rmd-wq-archive"><p class="rmd-wq-archive-empty">' . esc_html__('Das Wetterarchiv enthält noch keine Messwerte. Die Aufzeichnung beginnt automatisch, sobald die Zeitsteuerung läuft.', 'rmd-weatherquery') . '</p></div>';
         }
 
-        $response = wp_remote_get($url, $args);
-
-        if (is_wp_error($response)) {
-            if ($this->debug_mode_enabled()) {
-                return array(
-                    'error' => 'HTTP Request Fehler: ' . $response->get_error_message(),
-                    'debug' => isset($debug_info) ? $debug_info : null
-                );
-            }
-            return false;
-        }
-
-        $http_code = wp_remote_retrieve_response_code($response);
-        $body = wp_remote_retrieve_body($response);
-        $data = json_decode($body, true);
-
-        if ($http_code !== 200) {
-            if ($this->debug_mode_enabled()) {
-                return array(
-                    'error' => 'HTTP Error ' . $http_code,
-                    'response_body' => $body,
-                    'debug' => isset($debug_info) ? $debug_info : null
-                );
-            }
-            return false;
-        }
-
-        if (!$data) {
-            if ($this->debug_mode_enabled()) {
-                return array(
-                    'error' => 'JSON Decode Fehler',
-                    'response_body' => $body,
-                    'json_error' => json_last_error_msg(),
-                    'debug' => isset($debug_info) ? $debug_info : null
-                );
-            }
-            return false;
-        }
-
-        return $data;
-    }
-
-    private function format_historic_data($data, $atts) {
-        if (!$data || !isset($data['sensor'])) {
-            return '<div class="rmd-wq-error">' . __('Keine historischen Daten verfügbar', 'rmd-weatherquery') . '</div>';
-        }
-
-        $sensor = $data['sensor'];
-
-        // Handle show_all_fields option
-        if (strtolower($atts['show_all_fields']) === 'true') {
-            $fields = array(); // Will be populated from actual data
-        } else {
-            $fields = explode(',', $atts['fields']);
-            $fields = array_map('trim', $fields);
-        }
-
-        // Collect historic readings
-        $historic_readings = array();
-
-        if (isset($sensor['data']) && is_array($sensor['data'])) {
-            foreach ($sensor['data'] as $reading) {
-                $reading_data = array();
-                $timestamp = isset($reading['ts']) ? $reading['ts'] : null;
-
-                // Collect all readings if show_all_fields is true
-                if (strtolower($atts['show_all_fields']) === 'true' && empty($fields)) {
-                    $available_fields = array_keys($reading);
-                    $weather_fields = $this->get_weather_related_fields();
-                    $fields = array_intersect($available_fields, $weather_fields);
-                }
-
-                foreach ($fields as $field) {
-                    $actual_field = $this->map_field_name($field);
-
-                    if (isset($reading[$actual_field])) {
-                        $reading_data[$field] = array(
-                            'label' => $this->get_field_label($field),
-                            'value' => $this->format_field_value($field, $reading[$actual_field], $atts['temperature_unit']),
-                            'raw_value' => $reading[$actual_field],
-                            'icon' => $this->get_field_icon($field)
-                        );
-                    }
-                }
-
-                if (!empty($reading_data)) {
-                    $historic_readings[] = array(
-                        'timestamp' => $timestamp,
-                        'formatted_timestamp' => $this->format_timestamp($timestamp),
-                        'data' => $reading_data
-                    );
-                }
-            }
-        }
-
-        if (empty($historic_readings)) {
-            return '<div class="rmd-wq-error">' . __('Keine Daten für den angegebenen Zeitraum gefunden', 'rmd-weatherquery') . '</div>';
-        }
-
-        // Apply aggregation if requested
-        if ($atts['aggregate'] !== 'none') {
-            $historic_readings = $this->aggregate_historic_data($historic_readings, $atts['aggregate'], $fields, $atts['temperature_unit']);
-        }
-
-        // Build data attributes
-        $data_attributes = '';
-        $data_attributes .= ' data-sensor-id="' . esc_attr($atts['sensor_id']) . '"';
-        $data_attributes .= ' data-mode="archive"';
-        $data_attributes .= ' data-fields="' . esc_attr($atts['fields']) . '"';
-        $data_attributes .= ' data-display-mode="' . esc_attr($atts['display_mode']) . '"';
-
-        // Format output based on display mode
-        switch ($atts['display_mode']) {
-            case 'table':
-                return $this->format_historic_table_display($historic_readings, $data_attributes, $atts, $fields);
-            case 'list':
-                return $this->format_historic_list_display($historic_readings, $data_attributes, $atts);
-            case 'widget':
-                return $this->format_historic_widget_display($historic_readings, $data_attributes, $atts);
+        switch ($view) {
+            case 'monthly':
+                return $this->render_archive_monthly($station_id, $atts);
+            case 'readings':
+                return $this->render_archive_readings($station_id, $atts, $selectable, $first_day);
+            case 'chart':
+                list($from, $to) = $this->archive_range($atts, $selectable);
+                return $this->render_archive_chart($station_id, $atts, $from, $to, $selectable);
             default:
-                return $this->format_historic_table_display($historic_readings, $data_attributes, $atts, $fields);
+                list($from, $to) = $this->archive_range($atts, $selectable);
+                return $this->render_archive_daily($station_id, $atts, $from, $to, $selectable);
         }
     }
 
-    private function aggregate_historic_data($readings, $aggregate_type, $fields, $temperature_unit) {
-        // This is a placeholder for aggregation logic
-        // You can implement daily/hourly aggregation here
-        // For now, just return the original readings
-        return $readings;
-    }
+    /**
+     * Station for the archive: attribute, legacy sensor_id, archive setting, header station,
+     * or the first station that has archived readings.
+     */
+    private function resolve_archive_station($atts) {
+        global $wpdb;
 
-    private function format_historic_table_display($readings, $data_attributes, $atts, $fields) {
-        $output = '<div class="rmd-wq-data rmd-wq-archive rmd-wq-table"' . $data_attributes . '>';
-        $output .= '<table class="rmd-wq-weather-table">';
-
-        // Table header
-        $output .= '<thead><tr>';
-        $output .= '<th>' . __('Datum/Zeit', 'rmd-weatherquery') . '</th>';
-
-        foreach ($fields as $field) {
-            $label = $this->get_field_label($field);
-            if (strtolower($atts['show_icons']) === 'true') {
-                $icon = $this->get_field_icon($field);
-                $icon_style = '';
-                if (!empty($atts['icon_color']) && $atts['icon_color'] !== '#62C626') {
-                    $icon_style = ' style="color: ' . esc_attr($atts['icon_color']) . ';"';
-                }
-                $label = '<i class="wi ' . esc_attr($icon) . '"' . $icon_style . '></i> ' . esc_html($label);
-            } else {
-                $label = esc_html($label);
+        foreach (array($atts['station_id'], $atts['sensor_id'],
+                       isset($this->options['default_sensor_id']) ? $this->options['default_sensor_id'] : '',
+                       isset($this->options['header_station_id']) ? $this->options['header_station_id'] : '') as $candidate) {
+            if (absint($candidate) > 0) {
+                return absint($candidate);
             }
-            $output .= '<th>' . $label . '</th>';
         }
 
-        $output .= '</tr></thead>';
+        $table = $this->archive_table();
+        return (int) $wpdb->get_var("SELECT station_id FROM $table ORDER BY id ASC LIMIT 1");
+    }
 
-        // Table body
-        $output .= '<tbody>';
+    private function get_archive_first_day($station_id) {
+        global $wpdb;
+        $table = $this->archive_table();
+        $day = $wpdb->get_var($wpdb->prepare("SELECT MIN(day) FROM $table WHERE station_id = %d", $station_id));
+        return $day ? $day : null;
+    }
 
-        foreach ($readings as $reading) {
+    /** Period options visitors can pick in daily/chart views. */
+    private function archive_period_options() {
+        return array(
+            7 => __('7 Tage', 'rmd-weatherquery'),
+            30 => __('30 Tage', 'rmd-weatherquery'),
+            90 => __('90 Tage', 'rmd-weatherquery'),
+            365 => __('1 Jahr', 'rmd-weatherquery')
+        );
+    }
+
+    /**
+     * @return array{0: string, 1: string} First and last day (Y-m-d), inclusive.
+     */
+    private function archive_range($atts, $selectable) {
+        $today = wp_date('Y-m-d');
+
+        if (!empty($atts['start_date'])) {
+            $from = $this->sanitize_day($atts['start_date']);
+            $to = !empty($atts['end_date']) ? $this->sanitize_day($atts['end_date']) : $today;
+            if ($from && $to) {
+                return array(min($from, $to), max($from, $to));
+            }
+        }
+
+        $days = max(1, min(3660, absint($atts['days'])));
+        if ($selectable && isset($_GET['wq_days']) && array_key_exists(absint($_GET['wq_days']), $this->archive_period_options())) {
+            $days = absint($_GET['wq_days']);
+        }
+
+        $from = wp_date('Y-m-d', strtotime($today . ' 12:00:00 UTC') - ($days - 1) * DAY_IN_SECONDS, new DateTimeZone('UTC'));
+        return array($from, $today);
+    }
+
+    private function sanitize_day($value) {
+        $value = substr(sanitize_text_field((string) $value), 0, 10);
+        $dt = DateTime::createFromFormat('!Y-m-d', $value);
+        return ($dt && $dt->format('Y-m-d') === $value) ? $value : null;
+    }
+
+    private function format_archive_day($day, $format = 'D, d.m.Y') {
+        return wp_date($format, strtotime($day . ' 12:00:00 UTC'), new DateTimeZone('UTC'));
+    }
+
+    private function get_archive_daily_rows($station_id, $from, $to) {
+        global $wpdb;
+        $table = $this->archive_table();
+
+        return $wpdb->get_results($wpdb->prepare(
+            "SELECT day, COUNT(*) AS readings, MIN(temp) AS temp_min, MAX(temp) AS temp_max, AVG(temp) AS temp_avg,
+                    AVG(hum) AS hum_avg, AVG(bar) AS bar_avg, AVG(wind_avg) AS wind_avg, MAX(wind_gust) AS wind_gust,
+                    MAX(rain_day) AS rain
+             FROM $table WHERE station_id = %d AND day BETWEEN %s AND %s
+             GROUP BY day ORDER BY day ASC",
+            $station_id, $from, $to
+        ), ARRAY_A);
+    }
+
+    /** Value formatted like the live display, or a dash when nothing was recorded. */
+    private function format_archive_value($field, $value, $atts) {
+        if ($value === null || $value === '') {
+            return '–';
+        }
+        return $this->format_field_value($field, (float) $value, $atts['temperature_unit']);
+    }
+
+    private function archive_header_cell($field, $label, $atts) {
+        $item = array('icon' => $this->get_field_icon($field));
+        $icon = $this->render_icon($item, $atts);
+        return '<th>' . ($icon !== '' ? $icon . ' ' : '') . esc_html($label) . '</th>';
+    }
+
+    private function render_archive_daily($station_id, $atts, $from, $to, $selectable) {
+        $rows = array_reverse($this->get_archive_daily_rows($station_id, $from, $to));
+
+        $output = '<div class="rmd-wq-data rmd-wq-archive rmd-wq-table" data-view="daily" data-station-id="' . esc_attr($station_id) . '">';
+        if ($selectable) {
+            $output .= $this->render_archive_period_form($from, $to);
+        }
+
+        if (empty($rows)) {
+            return $output . '<p class="rmd-wq-archive-empty">' . esc_html__('Für diesen Zeitraum sind keine Messwerte archiviert.', 'rmd-weatherquery') . '</p></div>';
+        }
+
+        $output .= '<table class="rmd-wq-weather-table"><thead><tr>';
+        $output .= '<th>' . esc_html__('Tag', 'rmd-weatherquery') . '</th>';
+        $output .= $this->archive_header_cell('temp', __('Tiefst', 'rmd-weatherquery'), $atts);
+        $output .= $this->archive_header_cell('temp', __('Höchst', 'rmd-weatherquery'), $atts);
+        $output .= $this->archive_header_cell('temp', __('Mittel', 'rmd-weatherquery'), $atts);
+        $output .= $this->archive_header_cell('rainfall', __('Niederschlag', 'rmd-weatherquery'), $atts);
+        $output .= $this->archive_header_cell('wind_speed', __('Wind Ø', 'rmd-weatherquery'), $atts);
+        $output .= $this->archive_header_cell('wind_gust', __('Böe max.', 'rmd-weatherquery'), $atts);
+        $output .= $this->archive_header_cell('humidity', __('Feuchte Ø', 'rmd-weatherquery'), $atts);
+        $output .= $this->archive_header_cell('pressure', __('Luftdruck Ø', 'rmd-weatherquery'), $atts);
+        $output .= '</tr></thead><tbody>';
+
+        foreach ($rows as $row) {
+            $title = sprintf(_n('%d Messung', '%d Messungen', $row['readings'], 'rmd-weatherquery'), $row['readings']);
             $output .= '<tr>';
-            $output .= '<td>' . esc_html($reading['formatted_timestamp']) . '</td>';
-
-            foreach ($fields as $field) {
-                $value = isset($reading['data'][$field]) ? $reading['data'][$field]['value'] : '-';
-                $output .= '<td>' . esc_html($value) . '</td>';
-            }
-
+            $output .= '<td title="' . esc_attr($title) . '">' . esc_html($this->format_archive_day($row['day'])) . '</td>';
+            $output .= '<td>' . esc_html($this->format_archive_value('temp', $row['temp_min'], $atts)) . '</td>';
+            $output .= '<td>' . esc_html($this->format_archive_value('temp', $row['temp_max'], $atts)) . '</td>';
+            $output .= '<td>' . esc_html($this->format_archive_value('temp', $row['temp_avg'], $atts)) . '</td>';
+            $output .= '<td>' . esc_html($this->format_archive_value('rainfall', $row['rain'], $atts)) . '</td>';
+            $output .= '<td>' . esc_html($this->format_archive_value('wind_speed_avg', $row['wind_avg'], $atts)) . '</td>';
+            $output .= '<td>' . esc_html($this->format_archive_value('wind_gust', $row['wind_gust'], $atts)) . '</td>';
+            $output .= '<td>' . esc_html($this->format_archive_value('humidity', $row['hum_avg'], $atts)) . '</td>';
+            $output .= '<td>' . esc_html($this->format_archive_value('pressure', $row['bar_avg'], $atts)) . '</td>';
             $output .= '</tr>';
         }
 
-        $output .= '</tbody>';
-        $output .= '</table>';
-        $output .= '</div>';
-
-        return $output;
+        return $output . '</tbody></table></div>';
     }
 
-    private function format_historic_list_display($readings, $data_attributes, $atts) {
-        $output = '<div class="rmd-wq-data rmd-wq-archive rmd-wq-list"' . $data_attributes . '>';
+    private function render_archive_monthly($station_id, $atts) {
+        global $wpdb;
+        $table = $this->archive_table();
 
-        foreach ($readings as $reading) {
-            $output .= '<div class="rmd-wq-reading">';
-            $output .= '<h4>' . esc_html($reading['formatted_timestamp']) . '</h4>';
-            $output .= '<ul>';
+        // Rain per day is the day's highest value of the station's daily counter; months sum those.
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT LEFT(day, 7) AS month, COUNT(*) AS days, MIN(temp_min) AS temp_min, MAX(temp_max) AS temp_max,
+                    AVG(temp_avg) AS temp_avg, SUM(rain) AS rain, SUM(rain >= 0.0078) AS rain_days, MAX(wind_gust) AS wind_gust
+             FROM (
+                SELECT day, MIN(temp) AS temp_min, MAX(temp) AS temp_max, AVG(temp) AS temp_avg,
+                       MAX(rain_day) AS rain, MAX(wind_gust) AS wind_gust
+                FROM $table WHERE station_id = %d GROUP BY day
+             ) AS daily
+             GROUP BY month ORDER BY month DESC",
+            $station_id
+        ), ARRAY_A);
 
-            foreach ($reading['data'] as $field_data) {
-                $icon_html = '';
-                if (strtolower($atts['show_icons']) === 'true') {
-                    $icon_style = '';
-                    if (!empty($atts['icon_color']) && $atts['icon_color'] !== '#62C626') {
-                        $icon_style = ' style="color: ' . esc_attr($atts['icon_color']) . ';"';
-                    }
-                    $icon_html = '<i class="wi ' . esc_attr($field_data['icon']) . '"' . $icon_style . '></i> ';
-                }
-                $output .= '<li>' . $icon_html . esc_html($field_data['label']) . ': ' . esc_html($field_data['value']) . '</li>';
-            }
+        $output = '<div class="rmd-wq-data rmd-wq-archive rmd-wq-table" data-view="monthly" data-station-id="' . esc_attr($station_id) . '">';
+        $output .= '<table class="rmd-wq-weather-table"><thead><tr>';
+        $output .= '<th>' . esc_html__('Monat', 'rmd-weatherquery') . '</th>';
+        $output .= $this->archive_header_cell('temp', __('Tiefst', 'rmd-weatherquery'), $atts);
+        $output .= $this->archive_header_cell('temp', __('Höchst', 'rmd-weatherquery'), $atts);
+        $output .= $this->archive_header_cell('temp', __('Mittel', 'rmd-weatherquery'), $atts);
+        $output .= $this->archive_header_cell('rainfall', __('Niederschlag', 'rmd-weatherquery'), $atts);
+        $output .= '<th>' . esc_html__('Regentage', 'rmd-weatherquery') . '</th>';
+        $output .= $this->archive_header_cell('wind_gust', __('Böe max.', 'rmd-weatherquery'), $atts);
+        $output .= '<th>' . esc_html__('Tage mit Daten', 'rmd-weatherquery') . '</th>';
+        $output .= '</tr></thead><tbody>';
 
-            $output .= '</ul>';
-            $output .= '</div>';
+        foreach ($rows as $row) {
+            $output .= '<tr>';
+            $output .= '<td>' . esc_html($this->format_archive_day($row['month'] . '-01', 'F Y')) . '</td>';
+            $output .= '<td>' . esc_html($this->format_archive_value('temp', $row['temp_min'], $atts)) . '</td>';
+            $output .= '<td>' . esc_html($this->format_archive_value('temp', $row['temp_max'], $atts)) . '</td>';
+            $output .= '<td>' . esc_html($this->format_archive_value('temp', $row['temp_avg'], $atts)) . '</td>';
+            $output .= '<td>' . esc_html($this->format_archive_value('rainfall', $row['rain'], $atts)) . '</td>';
+            $output .= '<td>' . esc_html((int) $row['rain_days']) . '</td>';
+            $output .= '<td>' . esc_html($this->format_archive_value('wind_gust', $row['wind_gust'], $atts)) . '</td>';
+            $output .= '<td>' . esc_html((int) $row['days']) . '</td>';
+            $output .= '</tr>';
         }
 
-        $output .= '</div>';
-        return $output;
+        return $output . '</tbody></table></div>';
     }
 
-    private function format_historic_widget_display($readings, $data_attributes, $atts) {
-        $output = '<div class="rmd-wq-data rmd-wq-archive rmd-wq-widget"' . $data_attributes . '>';
+    /** Plugin fields that can be shown per reading, mapped to their archive column. */
+    private function archive_reading_fields() {
+        $fields = array();
+        foreach (self::ARCHIVE_COLUMNS as $column => $map) {
+            $fields[$map[1]] = $column;
+        }
+        return $fields;
+    }
 
-        foreach ($readings as $reading) {
-            $output .= '<div class="rmd-wq-reading-widget">';
-            $output .= '<h4>' . esc_html($reading['formatted_timestamp']) . '</h4>';
-            $output .= '<div class="rmd-wq-widget">';
+    private function render_archive_readings($station_id, $atts, $selectable, $first_day) {
+        global $wpdb;
+        $table = $this->archive_table();
+        $today = wp_date('Y-m-d');
 
-            foreach ($reading['data'] as $field_data) {
-                $output .= '<div class="rmd-wq-widget-item">';
-
-                if (strtolower($atts['show_icons']) === 'true') {
-                    $icon_style = '';
-                    if (!empty($atts['icon_color']) && $atts['icon_color'] !== '#62C626') {
-                        $icon_style = ' style="color: ' . esc_attr($atts['icon_color']) . ';"';
-                    }
-                    $output .= '<div class="rmd-wq-widget-icon"><i class="wi ' . esc_attr($field_data['icon']) . '"' . $icon_style . '></i></div>';
-                }
-
-                $output .= '<div class="rmd-wq-widget-content">';
-                $output .= '<div class="rmd-wq-widget-label">' . esc_html($field_data['label']) . '</div>';
-                $output .= '<div class="rmd-wq-widget-value">' . esc_html($field_data['value']) . '</div>';
-                $output .= '</div>';
-                $output .= '</div>';
+        $day = $this->sanitize_day($atts['date']);
+        if ($selectable && isset($_GET['wq_date'])) {
+            $requested = $this->sanitize_day(wp_unslash($_GET['wq_date']));
+            if ($requested) {
+                $day = $requested;
             }
-
-            $output .= '</div>';
-            $output .= '</div>';
+        }
+        if (!$day) {
+            $day = $today;
         }
 
-        $output .= '</div>';
-        return $output;
+        $available = $this->archive_reading_fields();
+        $requested_fields = $atts['fields'] !== ''
+            ? array_map('trim', explode(',', $atts['fields']))
+            : array('temp', 'humidity', 'pressure', 'wind_speed', 'wind_gust', 'wind_dir', 'rain_15_min');
+        $fields = array_values(array_filter($requested_fields, function ($field) use ($available) {
+            return isset($available[$field]);
+        }));
+
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM $table WHERE station_id = %d AND day = %s ORDER BY ts ASC",
+            $station_id, $day
+        ), ARRAY_A);
+
+        $output = '<div class="rmd-wq-data rmd-wq-archive rmd-wq-table" data-view="readings" data-station-id="' . esc_attr($station_id) . '">';
+        if ($selectable) {
+            $output .= $this->render_archive_day_form($day, $first_day, $today);
+        }
+
+        if (empty($rows) || empty($fields)) {
+            return $output . '<p class="rmd-wq-archive-empty">' . esc_html(sprintf(__('Für den %s sind keine Messwerte archiviert.', 'rmd-weatherquery'), $this->format_archive_day($day, 'd.m.Y'))) . '</p></div>';
+        }
+
+        $output .= '<table class="rmd-wq-weather-table"><thead><tr><th>' . esc_html__('Uhrzeit', 'rmd-weatherquery') . '</th>';
+        foreach ($fields as $field) {
+            $output .= $this->archive_header_cell($field, $this->get_field_label($field), $atts);
+        }
+        $output .= '</tr></thead><tbody>';
+
+        foreach ($rows as $row) {
+            $output .= '<tr><td>' . esc_html(wp_date('H:i', (int) $row['ts'])) . '</td>';
+            foreach ($fields as $field) {
+                $output .= '<td>' . esc_html($this->format_archive_value($field, $row[$available[$field]], $atts)) . '</td>';
+            }
+            $output .= '</tr>';
+        }
+
+        return $output . '</tbody></table></div>';
+    }
+
+    private function render_archive_chart($station_id, $atts, $from, $to, $selectable) {
+        $rows = $this->get_archive_daily_rows($station_id, $from, $to);
+        $fahrenheit = strtolower($atts['temperature_unit']) === 'fahrenheit';
+
+        $convert_temp = function ($value) use ($fahrenheit) {
+            if ($value === null) {
+                return null;
+            }
+            return round($fahrenheit ? (float) $value : ((float) $value - 32) * 5 / 9, 1);
+        };
+
+        $chart = array(
+            'labels' => array(),
+            'tempUnit' => $fahrenheit ? '°F' : '°C',
+            'tempMin' => array(),
+            'tempMax' => array(),
+            'tempAvg' => array(),
+            'rain' => array(),
+            'color' => sanitize_hex_color($atts['icon_color']) ? $atts['icon_color'] : '#62C626',
+            'strings' => array(
+                'tempMin' => __('Tiefst', 'rmd-weatherquery'),
+                'tempMax' => __('Höchst', 'rmd-weatherquery'),
+                'tempAvg' => __('Mittel', 'rmd-weatherquery'),
+                'rain' => __('Niederschlag', 'rmd-weatherquery'),
+                'temp' => __('Temperatur', 'rmd-weatherquery')
+            )
+        );
+        foreach ($rows as $row) {
+            $chart['labels'][] = $this->format_archive_day($row['day'], 'd.m.');
+            $chart['tempMin'][] = $convert_temp($row['temp_min']);
+            $chart['tempMax'][] = $convert_temp($row['temp_max']);
+            $chart['tempAvg'][] = $convert_temp($row['temp_avg']);
+            $chart['rain'][] = $row['rain'] === null ? null : round((float) $row['rain'] * 25.4, 1);
+        }
+
+        $output = '<div class="rmd-wq-data rmd-wq-archive rmd-wq-archive-chart" data-view="chart" data-station-id="' . esc_attr($station_id) . '">';
+        if ($selectable) {
+            $output .= $this->render_archive_period_form($from, $to);
+        }
+
+        if (empty($rows)) {
+            return $output . '<p class="rmd-wq-archive-empty">' . esc_html__('Für diesen Zeitraum sind keine Messwerte archiviert.', 'rmd-weatherquery') . '</p></div>';
+        }
+
+        if (defined('REST_REQUEST') && REST_REQUEST) {
+            return $output . '<div class="rmd-wq-notice">' . esc_html(sprintf(__('Diagramm Temperatur und Niederschlag (%d Tage) – wird auf der Seite angezeigt.', 'rmd-weatherquery'), count($rows))) . '</div></div>';
+        }
+
+        wp_enqueue_script('rmd-wq-archive-chart');
+        $output .= '<div class="rmd-wq-chart-canvas"><canvas role="img" aria-label="' . esc_attr(sprintf(__('Temperatur und Niederschlag vom %1$s bis %2$s', 'rmd-weatherquery'), $this->format_archive_day($from, 'd.m.Y'), $this->format_archive_day($to, 'd.m.Y'))) . '" data-rmd-wq-chart="' . esc_attr(wp_json_encode($chart)) . '"></canvas></div>';
+
+        return $output . '</div>';
+    }
+
+    /** Hidden inputs that keep foreign query arguments (e.g. page_id without pretty permalinks). */
+    private function archive_form_hidden_fields($exclude) {
+        $html = '';
+        foreach ($_GET as $key => $value) {
+            if (in_array($key, $exclude, true) || is_array($value)) {
+                continue;
+            }
+            $html .= '<input type="hidden" name="' . esc_attr(sanitize_key($key)) . '" value="' . esc_attr(sanitize_text_field(wp_unslash($value))) . '">';
+        }
+        return $html;
+    }
+
+    private function render_archive_period_form($from, $to) {
+        $current = isset($_GET['wq_days']) ? absint($_GET['wq_days']) : 0;
+        $output = '<form class="rmd-wq-archive-controls" method="get">';
+        $output .= $this->archive_form_hidden_fields(array('wq_days'));
+        $output .= '<label>' . esc_html__('Zeitraum', 'rmd-weatherquery') . ' <select name="wq_days" onchange="this.form.submit()">';
+        foreach ($this->archive_period_options() as $days => $label) {
+            $selected = $current ? $current === $days : (int) ((strtotime($to) - strtotime($from)) / DAY_IN_SECONDS) + 1 === $days;
+            $output .= '<option value="' . esc_attr($days) . '"' . selected($selected, true, false) . '>' . esc_html($label) . '</option>';
+        }
+        $output .= '</select></label>';
+        $output .= '<noscript><button type="submit">' . esc_html__('Anzeigen', 'rmd-weatherquery') . '</button></noscript>';
+        $output .= '<span class="rmd-wq-archive-range">' . esc_html($this->format_archive_day($from, 'd.m.Y') . ' – ' . $this->format_archive_day($to, 'd.m.Y')) . '</span>';
+        return $output . '</form>';
+    }
+
+    private function render_archive_day_form($day, $first_day, $today) {
+        $prev = $day > $first_day
+            ? wp_date('Y-m-d', strtotime($day . ' 12:00:00 UTC') - DAY_IN_SECONDS, new DateTimeZone('UTC')) : null;
+        $next = $day < $today
+            ? wp_date('Y-m-d', strtotime($day . ' 12:00:00 UTC') + DAY_IN_SECONDS, new DateTimeZone('UTC')) : null;
+
+        $output = '<form class="rmd-wq-archive-controls" method="get">';
+        $output .= $this->archive_form_hidden_fields(array('wq_date'));
+        if ($prev) {
+            $output .= '<a class="rmd-wq-archive-nav" href="' . esc_url(add_query_arg('wq_date', $prev)) . '" aria-label="' . esc_attr__('Vorheriger Tag', 'rmd-weatherquery') . '">‹</a>';
+        }
+        $output .= '<label>' . esc_html__('Tag', 'rmd-weatherquery') . ' <input type="date" name="wq_date" value="' . esc_attr($day) . '" min="' . esc_attr($first_day) . '" max="' . esc_attr($today) . '" onchange="this.form.submit()"></label>';
+        if ($next) {
+            $output .= '<a class="rmd-wq-archive-nav" href="' . esc_url(add_query_arg('wq_date', $next)) . '" aria-label="' . esc_attr__('Nächster Tag', 'rmd-weatherquery') . '">›</a>';
+        }
+        $output .= '<noscript><button type="submit">' . esc_html__('Anzeigen', 'rmd-weatherquery') . '</button></noscript>';
+        return $output . '</form>';
     }
 
     private function get_cache($key) {
@@ -1659,10 +1876,151 @@ class RMD_WeatherQuery {
         
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
-        
+
+        // Every successful live request also feeds the archive; duplicates are ignored.
+        if ($atts['mode'] === 'current' && is_array($data) && isset($data['sensors'])) {
+            $this->archive_reading((int) $atts['station_id'], $data);
+        }
+
         return $data;
     }
-    
+
+    /**
+     * Cron callback: fetches current conditions of every station on the account and archives them.
+     */
+    public function run_archive() {
+        if (!$this->is_configured()) {
+            return;
+        }
+
+        $stations = $this->get_stations_with_models();
+        if (!is_array($stations) || isset($stations['error'])) {
+            $this->set_archive_status(0, __('Stationen konnten nicht geladen werden', 'rmd-weatherquery'));
+            return;
+        }
+
+        $stored = 0;
+        $errors = array();
+        foreach ($stations as $station) {
+            if (empty($station['station_id'])) {
+                continue;
+            }
+            $data = $this->get_weather_data(array(
+                'mode' => 'current',
+                'station_id' => (string) $station['station_id'],
+                'api_key' => ''
+            ));
+            if (!is_array($data) || !isset($data['sensors'])) {
+                $errors[] = sprintf(__('Station %s: keine Daten von WeatherLink', 'rmd-weatherquery'), $station['station_id']);
+                continue;
+            }
+            // get_weather_data() already archived the reading.
+            if ($this->last_archive_result === 'inserted') {
+                $stored++;
+            } elseif ($this->last_archive_result !== 'duplicate') {
+                $errors[] = sprintf(__('Station %s', 'rmd-weatherquery'), $station['station_id']) . ': ' . $this->last_archive_result;
+            }
+        }
+
+        $this->set_archive_status($stored, implode('; ', $errors));
+    }
+
+    /** Outcome of the last archive_reading() call: 'inserted', 'duplicate' or an error message. */
+    private $last_archive_result = '';
+
+    /**
+     * Stores the station's current reading. The timestamp of the sensor that delivers the outdoor
+     * temperature (ISS) identifies the reading; the health sensor reports on its own schedule.
+     */
+    private function archive_reading($station_id, $data) {
+        global $wpdb;
+
+        if ($station_id <= 0) {
+            $this->last_archive_result = __('ungültige Stations-ID', 'rmd-weatherquery');
+            return false;
+        }
+
+        $readings = array();
+        $ts = 0;
+        $tz_offset = null;
+        foreach ($data['sensors'] as $sensor) {
+            if (empty($sensor['data'][0]) || !is_array($sensor['data'][0])) {
+                continue;
+            }
+            $reading = $sensor['data'][0];
+            if ($ts === 0 && array_key_exists('temp', $reading) && !empty($reading['ts'])) {
+                $ts = (int) $reading['ts'];
+                $tz_offset = isset($reading['tz_offset']) ? (int) $reading['tz_offset'] : null;
+            }
+            foreach ($reading as $key => $value) {
+                if (!array_key_exists($key, $readings)) {
+                    $readings[$key] = $value;
+                }
+            }
+        }
+
+        if ($ts === 0) {
+            $this->last_archive_result = __('keine Außensensor-Messung in der Antwort', 'rmd-weatherquery');
+            return false;
+        }
+        if ($tz_offset === null) {
+            $tz_offset = (int) wp_timezone()->getOffset(new DateTime('@' . $ts));
+        }
+
+        $row = array(
+            'station_id' => $station_id,
+            'ts' => $ts,
+            'day' => gmdate('Y-m-d', $ts + $tz_offset)
+        );
+        $formats = array('%d', '%d', '%s');
+        foreach (self::ARCHIVE_COLUMNS as $column => $map) {
+            if (isset($readings[$map[0]]) && is_numeric($readings[$map[0]])) {
+                $row[$column] = (float) $readings[$map[0]];
+                $formats[] = '%f';
+            }
+        }
+
+        $table = $this->archive_table();
+        if ($wpdb->get_var($wpdb->prepare("SELECT id FROM $table WHERE station_id = %d AND ts = %d", $station_id, $ts))) {
+            $this->last_archive_result = 'duplicate';
+            return true;
+        }
+
+        if ($wpdb->insert($table, $row, $formats) === false) {
+            $this->last_archive_result = __('Datenbankfehler beim Archivieren', 'rmd-weatherquery') . ': ' . $wpdb->last_error;
+            return false;
+        }
+        $this->last_archive_result = 'inserted';
+        return true;
+    }
+
+    private function set_archive_status($stored, $error) {
+        update_option('rmd_weatherquery_archive_status', array(
+            'last_run' => time(),
+            'stored' => (int) $stored,
+            'error' => (string) $error
+        ), false);
+    }
+
+    public function ajax_archive_now() {
+        check_ajax_referer('rmd_wq_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_die(__('Unzureichende Berechtigung', 'rmd-weatherquery'));
+        }
+
+        $this->run_archive();
+        $status = get_option('rmd_weatherquery_archive_status', array());
+        if (!empty($status['error'])) {
+            wp_send_json_error($status['error']);
+        }
+        wp_send_json_success(array(
+            'message' => $status['stored'] > 0
+                ? sprintf(__('%d neue Messung(en) archiviert.', 'rmd-weatherquery'), $status['stored'])
+                : __('Keine neue Messung – die aktuelle ist bereits archiviert.', 'rmd-weatherquery')
+        ));
+    }
+
     /**
      * Merges the first reading of every sensor into one flat array (first occurrence of a field wins).
      *
@@ -1812,8 +2170,10 @@ class RMD_WeatherQuery {
             'iconColor' => '#62C626',
             'showTimestamp' => false,
             'temperatureUnit' => 'celsius',
-            'startTimestamp' => 0,
-            'endTimestamp' => 0,
+            'archiveView' => 'daily',
+            'archiveDays' => 30,
+            'archiveDate' => '',
+            'archiveSelectable' => true,
             'title' => '',
             'titleLevel' => 3,
             'columns' => 0,
@@ -1844,7 +2204,7 @@ class RMD_WeatherQuery {
         $icon_color = sanitize_hex_color($a['iconColor']);
 
         $atts = array(
-            'mode' => $a['mode'] === 'historic' ? 'historic' : 'current',
+            'mode' => 'current',
             'station_id' => (string) absint($a['stationId']),
             'fields' => implode(',', $fields),
             'api_key' => '',
@@ -1852,18 +2212,35 @@ class RMD_WeatherQuery {
             'show_icons' => $a['showIcons'] ? 'true' : 'false',
             'icon_color' => $icon_color ? $icon_color : '#62C626',
             'show_timestamp' => $a['showTimestamp'] ? 'true' : 'false',
-            'start_timestamp' => $a['startTimestamp'] ? (string) absint($a['startTimestamp']) : '',
-            'end_timestamp' => $a['endTimestamp'] ? (string) absint($a['endTimestamp']) : '',
+            'start_timestamp' => '',
+            'end_timestamp' => '',
             'temperature_unit' => $a['temperatureUnit'] === 'fahrenheit' ? 'fahrenheit' : 'celsius',
             'show_all_fields' => $a['showAllFields'] ? 'true' : 'false',
             'labels' => $labels,
             'columns' => min(6, absint($a['columns']))
         );
 
-        $data = $this->get_weather_data_cached($atts, min(1440, absint($a['cacheMinutes'])));
-        $content = $data === false
-            ? '<div class="rmd-wq-error">' . esc_html__('Fehler beim Laden der Wetterdaten', 'rmd-weatherquery') . '</div>'
-            : $this->format_weather_data($data, $atts);
+        if ($a['mode'] === 'archive') {
+            $content = $this->render_archive(array(
+                'station_id' => $atts['station_id'],
+                'sensor_id' => '',
+                'view' => sanitize_key($a['archiveView']),
+                'days' => (string) absint($a['archiveDays']),
+                'start_date' => '',
+                'end_date' => '',
+                'date' => (string) $a['archiveDate'],
+                'fields' => $a['showAllFields'] ? '' : $atts['fields'],
+                'show_icons' => $atts['show_icons'],
+                'icon_color' => $atts['icon_color'],
+                'temperature_unit' => $atts['temperature_unit'],
+                'selectable' => $a['archiveSelectable'] ? 'true' : 'false'
+            ));
+        } else {
+            $data = $this->get_weather_data_cached($atts, min(1440, absint($a['cacheMinutes'])));
+            $content = $data === false
+                ? '<div class="rmd-wq-error">' . esc_html__('Fehler beim Laden der Wetterdaten', 'rmd-weatherquery') . '</div>'
+                : $this->format_weather_data($data, $atts);
+        }
 
         $title = '';
         if (trim($a['title']) !== '') {

@@ -5,6 +5,21 @@ All notable changes to this plugin are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.4.0] – 2026-11-18
+
+### Added
+
+- Own weather archive: WP-Cron fetches the current conditions of all stations every 5 minutes and stores each new reading in the table `rmd_weatherquery_archive`; live requests from page views are archived as well.
+- `[wq_archive]` views from the archive: daily values, monthly overview, single readings of a day and a temperature/rain chart (Chart.js, bundled). Visitors can pick the period or the day.
+- Block mode “Archiv” with the same views.
+- Archive status box with “fetch now” button on the configuration page.
+
+### Changed
+
+- `[wq_archive]` reads from the plugin's own archive instead of the WeatherLink historic API (which requires a Pro subscription). `sensor_id` still works as an alias for `station_id`.
+- The setting “Standard Sensor-ID” is now “Archiv-Station”.
+- The block's mode “Historische Daten” (WeatherLink Pro API) is replaced by “Archiv”.
+
 ## [1.3.1] – 2026-11-18
 
 ### Fixed

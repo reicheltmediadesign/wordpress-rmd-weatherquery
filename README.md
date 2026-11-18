@@ -5,6 +5,8 @@ WordPress plugin to show live weather data from Davis weather stations via the [
 ## Features
 
 - Shortcode `[wq]` for current or historic data of a station.
+- Shortcode `[wq_header]` for a compact one-line summary (temperature | rain | wind).
+- Own weather archive: readings are stored in the database and shown with `[wq_archive]` as daily values, monthly overview, single readings or chart – no WeatherLink Pro subscription needed.
 - Display as list, table or widget, optionally with weather icons and timestamp.
 - Conversion of temperature (°C/°F) and pressure units, German field labels.
 - Caching of API responses in its own database table, with refresh and clear in the admin.
@@ -39,7 +41,41 @@ Later releases are offered under Dashboard → Updates like any other plugin.
 | `show_all_fields` | `true`, `false` | `false` |
 | `start_timestamp`, `end_timestamp` | Unix timestamps (for `historic`) | – |
 
-The shortcode generator in the admin builds the shortcode for you.
+The shortcode generator in the admin builds the shortcode for you. `mode="historic"` uses the WeatherLink historic API, which requires a Pro subscription; use `[wq_archive]` instead.
+
+### Header line
+
+```
+[wq_header]
+```
+
+Shows temperature, today's rain and wind speed in one line. Without `station_id` it uses the station set under WeatherQuery → Stationen → Header-Wetter Konfiguration. Attributes: `station_id`, `icon_color`, `temperature_unit`, `separator` (default `|`).
+
+### Weather archive
+
+Every 5 minutes WP-Cron fetches the current conditions of all stations on the account and stores each new reading (WeatherLink Basic delivers one every 15 minutes) in the table `{prefix}rmd_weatherquery_archive`. Live requests from page views are archived as well. Status, last error and a “fetch now” button are on the WeatherQuery → Konfiguration page.
+
+WP-Cron only runs when someone visits the site. For gapless recording, have an external service call `https://example.com/wp-cron.php?doing_wp_cron` every 5 minutes.
+
+```
+[wq_archive view="daily" days="30"]
+[wq_archive view="chart" days="30"]
+[wq_archive view="readings"]
+[wq_archive view="monthly"]
+```
+
+| Attribute | Values | Default |
+| --- | --- | --- |
+| `view` | `daily` (one row per day), `monthly`, `readings` (all readings of one day), `chart` (temperature and rain per day) | `daily` |
+| `station_id` | WeatherLink station ID | archive station setting, then header station |
+| `days` | number of days up to today (`daily`, `chart`) | `30` |
+| `start_date`, `end_date` | `YYYY-MM-DD`, instead of `days` | – |
+| `date` | `YYYY-MM-DD` for `readings` | today |
+| `fields` | fields for `readings`: `temp`, `humidity`, `dew_point`, `pressure`, `wind_speed`, `wind_speed_avg`, `wind_gust`, `wind_dir`, `rainfall` (day total so far), `rain_15_min`, `rain_rate`, `solar_rad`, `uv_index` | `temp,humidity,pressure,wind_speed,wind_gust,wind_dir,rain_15_min` |
+| `selectable` | `true` lets visitors pick the period (`daily`, `chart`) or the day (`readings`) | `true` |
+| `show_icons`, `icon_color`, `temperature_unit` | as for `[wq]` | |
+
+Daily rain is the day's highest value of the station's own daily rain counter, so missing readings do not distort it.
 
 ### Block
 
@@ -50,12 +86,13 @@ The **WeatherQuery** block (category Widgets) offers everything the shortcode do
 - fixed number of columns, plain tiles, hidden labels and a tile background colour (widget mode)
 - block colours, spacing, font size and wide/full alignment
 - caching of the weather data per block (default 5 minutes)
+- mode “Archiv” with the same views as `[wq_archive]`
 
 Requires WordPress 6.3 or newer.
 
 ## Privacy
 
-The server requests data from `api.weatherlink.com`. The [Weather Icons](https://erikflowers.github.io/weather-icons/) font is bundled with the plugin, so visitors' browsers do not connect to any third-party server. API credentials stay on the server and are never output to the page.
+The server requests data from `api.weatherlink.com`. The [Weather Icons](https://erikflowers.github.io/weather-icons/) font and [Chart.js](https://www.chartjs.org/) are bundled with the plugin, so visitors' browsers do not connect to any third-party server. API credentials stay on the server and are never output to the page.
 
 ## License
 

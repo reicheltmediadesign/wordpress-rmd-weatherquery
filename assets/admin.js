@@ -364,6 +364,39 @@ jQuery(document).ready(function($) {
         });
     });
 
+    // Fetch and archive current readings now
+    $("#archive-now").on("click", function() {
+        var button = $(this);
+        var resultsDiv = $("#archive-results");
+        var originalText = button.text();
+
+        button.prop("disabled", true).text(rmd_wq_ajax.strings.loading);
+
+        $.ajax({
+            url: rmd_wq_ajax.ajax_url,
+            type: "POST",
+            data: {
+                action: "rmd_wq_archive_now",
+                nonce: rmd_wq_ajax.nonce
+            },
+            success: function(response) {
+                var html;
+                if (response.success) {
+                    html = '<div style="padding: 10px; background: #dff0d8; border-left: 4px solid #5cb85c;"><strong>✓</strong> ' + escapeHtml(response.data.message) + '</div>';
+                } else {
+                    html = '<div style="padding: 10px; background: #f2dede; border-left: 4px solid #d9534f;"><strong>✗ Fehler</strong><br>' + escapeHtml(response.data) + '</div>';
+                }
+                resultsDiv.html(html);
+            },
+            error: function() {
+                resultsDiv.html('<div style="padding: 10px; background: #f2dede; border-left: 4px solid #d9534f;">AJAX-Fehler beim Archivieren</div>');
+            },
+            complete: function() {
+                button.prop("disabled", false).text(originalText);
+            }
+        });
+    });
+
     // Save station ID used by [wq_header]
     $("#save-header-station").on("click", function() {
         var button = $(this);
