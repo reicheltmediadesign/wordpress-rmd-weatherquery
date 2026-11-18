@@ -5,6 +5,13 @@ All notable changes to this plugin are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.3.1] – 2026-11-18
+
+### Fixed
+
+- Restored the shortcodes `[wq_header]` and `[wq_archive]`, the “Header-Wetter Konfiguration” box and the “Standard Sensor-ID” setting. They existed in the version deployed before 1.1.0 but had never been committed, so the 1.3.0 update removed them.
+- Saving the API configuration no longer drops the header station ID.
+
 ## [1.3.0] – 2026-11-18
 
 ### Added
