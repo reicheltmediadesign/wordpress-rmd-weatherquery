@@ -1,0 +1,41 @@
+{
+	"$schema": "https://schemas.wp.org/trunk/block.json",
+	"apiVersion": 3,
+	"name": "rmd-weatherquery/weather",
+	"title": "WeatherQuery",
+	"category": "widgets",
+	"icon": "cloud",
+	"description": "Live-Wetterdaten einer WeatherLink-Station als Widget, Liste oder Tabelle.",
+	"keywords": ["wetter", "weather", "weatherlink", "davis", "station"],
+	"textdomain": "rmd-weatherquery",
+	"attributes": {
+		"stationId": { "type": "integer", "default": 0 },
+		"mode": { "type": "string", "enum": ["current", "historic"], "default": "current" },
+		"fields": { "type": "array", "items": { "type": "string" }, "default": ["temp", "humidity", "wind_speed", "wind_dir", "rainfall"] },
+		"showAllFields": { "type": "boolean", "default": false },
+		"displayMode": { "type": "string", "enum": ["widget", "list", "table"], "default": "widget" },
+		"showIcons": { "type": "boolean", "default": true },
+		"iconColor": { "type": "string", "default": "#62C626" },
+		"showTimestamp": { "type": "boolean", "default": true },
+		"temperatureUnit": { "type": "string", "enum": ["celsius", "fahrenheit"], "default": "celsius" },
+		"startTimestamp": { "type": "integer", "default": 0 },
+		"endTimestamp": { "type": "integer", "default": 0 },
+		"title": { "type": "string", "default": "" },
+		"titleLevel": { "type": "integer", "default": 3 },
+		"columns": { "type": "integer", "default": 0 },
+		"labels": { "type": "object", "default": {} },
+		"hideLabels": { "type": "boolean", "default": false },
+		"plainCards": { "type": "boolean", "default": false },
+		"cardBackground": { "type": "string", "default": "" },
+		"cacheMinutes": { "type": "integer", "default": 5 }
+	},
+	"supports": {
+		"html": false,
+		"align": ["wide", "full"],
+		"color": { "background": true, "text": true },
+		"spacing": { "margin": true, "padding": true },
+		"typography": { "fontSize": true }
+	},
+	"editorScript": "file:./index.js",
+	"style": "weather-icons"
+}

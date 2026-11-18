@@ -1,0 +1,6 @@
+Weather Icons 2.0.12 by Erik Flowers and Lukas Bischoff
+https://erikflowers.github.io/weather-icons/
+
+Font (font/*): SIL Open Font License 1.1 (https://openfontlicense.org/)
+CSS (css/*): MIT License (https://opensource.org/licenses/MIT)
+Icons: Creative Commons Attribution 3.0 (https://creativecommons.org/licenses/by/3.0/)

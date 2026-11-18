@@ -3,8 +3,8 @@
  * Plugin Name: RMD WeatherQuery
  * Plugin URI: https://github.com/reicheltmediadesign/wordpress-rmd-weatherquery
  * Description: Ein professionelles WordPress Plugin zur Anzeige von Wetterdaten über die WeatherLink v2 API. Unterstützt multiple Darstellungsmodi (Liste, Tabelle, Widget), Wetter-Icons, deutsche Lokalisierung, Temperatur-/Druckumrechnung und intelligente Caching-Funktionen. Entwickelt unter Mitwirkung von Anthropic Claude.
- * Version: 1.2.0
- * Requires at least: 6.0
+ * Version: 1.3.0
+ * Requires at least: 6.3
  * Requires PHP: 7.4
  * Author: reichelt media.design
  * Author URI: https://reicheltmedia.design
@@ -21,7 +21,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('RMD_WQ_VERSION', '1.2.0');
+define('RMD_WQ_VERSION', '1.3.0');
 define('RMD_WQ_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('RMD_WQ_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -49,6 +49,7 @@ class RMD_WeatherQuery {
         add_action('wp_enqueue_scripts', array($this, 'enqueue_scripts'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
         add_shortcode('wq', array($this, 'weather_shortcode'));
+        add_action('rest_api_init', array($this, 'register_rest_routes'));
 
         // Add AJAX handlers
         add_action('wp_ajax_rmd_wq_get_stations', array($this, 'ajax_get_stations'));
@@ -64,6 +65,23 @@ class RMD_WeatherQuery {
     
     public function init() {
         load_plugin_textdomain('rmd-weatherquery', false, dirname(plugin_basename(__FILE__)) . '/languages');
+        $this->maybe_upgrade();
+        $this->register_frontend_styles();
+        register_block_type(RMD_WQ_PLUGIN_DIR . 'blocks/weatherquery', array(
+            'render_callback' => array($this, 'render_block')
+        ));
+    }
+
+    /**
+     * The activation hook does not run on plugin updates, so the cache table is
+     * (re)created whenever the stored schema version differs from the plugin version.
+     */
+    private function maybe_upgrade() {
+        if (get_option('rmd_weatherquery_db_version') === RMD_WQ_VERSION) {
+            return;
+        }
+        $this->create_cache_table();
+        update_option('rmd_weatherquery_db_version', RMD_WQ_VERSION);
     }
     
     public function activate() {
@@ -115,6 +133,15 @@ class RMD_WeatherQuery {
             array($this, 'admin_page'),
             'dashicons-cloud',
             30
+        );
+
+        add_submenu_page(
+            'rmd-weatherquery',
+            __('Stationen', 'rmd-weatherquery'),
+            __('Stationen', 'rmd-weatherquery'),
+            'manage_options',
+            'rmd-weatherquery',
+            array($this, 'admin_page')
         );
 
         add_submenu_page(
@@ -402,8 +429,16 @@ class RMD_WeatherQuery {
     }
     
     public function enqueue_scripts() {
-        // Enqueue weather icons CSS from CDN
-        wp_enqueue_style('weather-icons', 'https://cdnjs.cloudflare.com/ajax/libs/weather-icons/2.0.12/css/weather-icons.min.css', array(), '2.0.12');
+        wp_enqueue_style('weather-icons');
+    }
+
+    /**
+     * Registered on init so the block (block.json "style") can load the same
+     * stylesheet in the editor and on the frontend.
+     */
+    private function register_frontend_styles() {
+        // Weather Icons are bundled locally so visitors' browsers do not contact a CDN.
+        wp_register_style('weather-icons', RMD_WQ_PLUGIN_URL . 'assets/weather-icons/css/weather-icons.min.css', array(), '2.0.12');
 
         // Add basic styling for our display modes and admin menu icon
         wp_add_inline_style('weather-icons', '
@@ -483,6 +518,33 @@ class RMD_WeatherQuery {
             .rmd-wq-list .wi {
                 color: #62C626;
                 margin-right: 5px;
+            }
+            .rmd-wq-data .wi.rmd-wq-wind-arrow {
+                transform-origin: 50% 50%;
+            }
+            .wp-block-rmd-weatherquery-weather .rmd-wq-title {
+                margin: 0 0 12px;
+            }
+            .wp-block-rmd-weatherquery-weather.has-text-color .rmd-wq-widget-label,
+            .wp-block-rmd-weatherquery-weather.has-text-color .rmd-wq-widget-value,
+            .wp-block-rmd-weatherquery-weather.has-text-color .rmd-wq-timestamp {
+                color: inherit;
+            }
+            .wp-block-rmd-weatherquery-weather .rmd-wq-widget-item {
+                background: var(--rmd-wq-card-bg, #fff);
+            }
+            .wp-block-rmd-weatherquery-weather.rmd-wq-cards-plain .rmd-wq-widget-item {
+                border: 0;
+                box-shadow: none;
+                padding: 8px 0;
+            }
+            .wp-block-rmd-weatherquery-weather.rmd-wq-hide-labels .rmd-wq-widget-label {
+                display: none;
+            }
+            .rmd-wq-notice {
+                padding: 12px;
+                border: 1px dashed #c3c4c7;
+                color: #50575e;
             }
             .rmd-wq-timestamp {
                 margin-top: 10px;
@@ -835,28 +897,54 @@ class RMD_WeatherQuery {
             return $stations;
         }
 
-        // Create product number to model mapping
-        $product_models = array();
+        // Sensors reference their station via station_id. The ISS (integrated sensor suite) is the
+        // actual weather station model; the station's own product_number belongs to the gateway.
+        $sensors_by_station = array();
         if (is_array($sensors)) {
             foreach ($sensors as $sensor) {
-                if (isset($sensor['product_number']) && isset($sensor['manufacturer']) && isset($sensor['product_name'])) {
-                    $product_models[$sensor['product_number']] = array(
-                        'manufacturer' => $sensor['manufacturer'],
-                        'product_name' => $sensor['product_name']
-                    );
+                if (isset($sensor['station_id'])) {
+                    $sensors_by_station[$sensor['station_id']][] = $sensor;
                 }
             }
         }
 
-        // Add model info to stations
         foreach ($stations as &$station) {
-            if (isset($station['product_number']) && isset($product_models[$station['product_number']])) {
-                $station['device_model'] = $product_models[$station['product_number']]['manufacturer'] . ' ' .
-                                          $product_models[$station['product_number']]['product_name'];
+            $iss_model = '';
+            $sensor_models = array();
+            $station_sensors = isset($sensors_by_station[$station['station_id']]) ? $sensors_by_station[$station['station_id']] : array();
+
+            foreach ($station_sensors as $sensor) {
+                $category = isset($sensor['category']) ? strtoupper($sensor['category']) : '';
+                if ($category === 'HEALTH' || (isset($sensor['active']) && !$sensor['active']) || empty($sensor['product_name'])) {
+                    continue;
+                }
+                $name = trim((isset($sensor['manufacturer']) ? $sensor['manufacturer'] . ' ' : '') . $sensor['product_name']);
+                if ($category === 'ISS' && $iss_model === '') {
+                    $iss_model = $name;
+                } else {
+                    $sensor_models[] = $sensor['product_name'];
+                }
+            }
+
+            $gateway = '';
+            if (!empty($station['gateway_type'])) {
+                $gateway = $station['gateway_type'];
+                if (!empty($station['product_number'])) {
+                    $gateway .= ' (' . $station['product_number'] . ')';
+                }
+            }
+
+            if ($iss_model !== '') {
+                $station['device_model'] = $iss_model;
+            } elseif ($gateway !== '') {
+                $station['device_model'] = $gateway;
             } else {
                 $station['device_model'] = __('Unbekanntes Modell', 'rmd-weatherquery');
             }
+            $station['gateway_model'] = $gateway;
+            $station['sensor_models'] = $sensor_models;
         }
+        unset($station);
 
         // Cache the result for 24 hours
         $this->set_cache($cache_key, $stations, 24);
@@ -1008,6 +1096,230 @@ class RMD_WeatherQuery {
         return $data;
     }
     
+    /**
+     * Merges the first reading of every sensor into one flat array (first occurrence of a field wins).
+     *
+     * @return array{0: array, 1: int|null} Readings and the timestamp of the first reading.
+     */
+    private function collect_readings($data) {
+        $all_readings = array();
+        $timestamp = null;
+
+        foreach ($data['sensors'] as $sensor) {
+            if (!isset($sensor['data']) || !is_array($sensor['data'])) {
+                continue;
+            }
+
+            foreach ($sensor['data'] as $reading) {
+                if ($timestamp === null && isset($reading['ts'])) {
+                    $timestamp = $reading['ts'];
+                }
+                foreach ($reading as $field_key => $field_value) {
+                    if (!array_key_exists($field_key, $all_readings)) {
+                        $all_readings[$field_key] = $field_value;
+                    }
+                }
+                break;
+            }
+        }
+
+        return array($all_readings, $timestamp);
+    }
+
+    /**
+     * Weather data with an optional cache lifetime; 0 minutes queries the API on every call.
+     */
+    private function get_weather_data_cached($atts, $cache_minutes) {
+        $cache_minutes = (int) $cache_minutes;
+        if ($cache_minutes <= 0) {
+            return $this->get_weather_data($atts);
+        }
+
+        $cache_key = 'weather_' . md5($atts['mode'] . '|' . $atts['station_id'] . '|' . $atts['start_timestamp'] . '|' . $atts['end_timestamp']);
+        $cached = $this->get_cache($cache_key);
+        if ($cached !== false && $cached !== null) {
+            return $cached;
+        }
+
+        $data = $this->get_weather_data($atts);
+        if (is_array($data) && isset($data['sensors'])) {
+            $this->set_cache($cache_key, $data, $cache_minutes / 60);
+        }
+        return $data;
+    }
+
+    public function register_rest_routes() {
+        $permission = function () {
+            return current_user_can('edit_posts');
+        };
+
+        register_rest_route('rmd-weatherquery/v1', '/stations', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'rest_get_stations'),
+            'permission_callback' => $permission
+        ));
+
+        register_rest_route('rmd-weatherquery/v1', '/fields', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'rest_get_fields'),
+            'permission_callback' => $permission,
+            'args' => array(
+                'station_id' => array(
+                    'required' => true,
+                    'sanitize_callback' => 'absint'
+                )
+            )
+        ));
+    }
+
+    public function rest_get_stations() {
+        if (!$this->is_configured()) {
+            return new WP_Error('rmd_wq_not_configured', __('WeatherQuery ist nicht konfiguriert. Bitte API-Zugangsdaten unter WeatherQuery → Konfiguration eintragen.', 'rmd-weatherquery'), array('status' => 400));
+        }
+
+        $stations = $this->get_stations_with_models();
+        if ($stations === false || (is_array($stations) && isset($stations['error']))) {
+            $message = is_array($stations) && isset($stations['error']) ? $stations['error'] : __('Fehler beim Laden der Stationen', 'rmd-weatherquery');
+            return new WP_Error('rmd_wq_stations_failed', $message, array('status' => 502));
+        }
+
+        $result = array();
+        foreach ($stations as $station) {
+            $result[] = array(
+                'id' => (int) $station['station_id'],
+                'name' => isset($station['station_name']) ? $station['station_name'] : (string) $station['station_id'],
+                'device_model' => isset($station['device_model']) ? $station['device_model'] : ''
+            );
+        }
+        return rest_ensure_response($result);
+    }
+
+    /**
+     * Fields the station currently delivers, as user-facing field names. Friendly aliases
+     * (humidity, wind_speed, ...) win over raw API names that map to the same reading.
+     */
+    public function rest_get_fields($request) {
+        $atts = array(
+            'mode' => 'current',
+            'station_id' => $request['station_id'],
+            'api_key' => '',
+            'start_timestamp' => '',
+            'end_timestamp' => ''
+        );
+        $data = $this->get_weather_data_cached($atts, 5);
+        if (!is_array($data) || !isset($data['sensors'])) {
+            return new WP_Error('rmd_wq_fields_failed', __('Fehler beim Laden der Wetterdaten', 'rmd-weatherquery'), array('status' => 502));
+        }
+
+        list($all_readings) = $this->collect_readings($data);
+
+        $candidates = array_merge(
+            array('temp', 'humidity', 'pressure', 'wind_speed', 'wind_dir', 'rainfall', 'rain_rate'),
+            $this->get_weather_related_fields()
+        );
+
+        $seen = array();
+        $fields = array();
+        foreach ($candidates as $field) {
+            $actual = $this->map_field_name($field);
+            if (isset($seen[$actual]) || !array_key_exists($actual, $all_readings) || $all_readings[$actual] === null) {
+                continue;
+            }
+            $seen[$actual] = true;
+            $fields[] = array(
+                'value' => $field,
+                'label' => $this->get_field_label($field)
+            );
+        }
+        return rest_ensure_response($fields);
+    }
+
+    public function render_block($attributes) {
+        $a = wp_parse_args($attributes, array(
+            'stationId' => 0,
+            'mode' => 'current',
+            'fields' => array('temp'),
+            'showAllFields' => false,
+            'displayMode' => 'widget',
+            'showIcons' => true,
+            'iconColor' => '#62C626',
+            'showTimestamp' => false,
+            'temperatureUnit' => 'celsius',
+            'startTimestamp' => 0,
+            'endTimestamp' => 0,
+            'title' => '',
+            'titleLevel' => 3,
+            'columns' => 0,
+            'labels' => array(),
+            'hideLabels' => false,
+            'plainCards' => false,
+            'cardBackground' => '',
+            'cacheMinutes' => 5
+        ));
+
+        $is_editor_preview = defined('REST_REQUEST') && REST_REQUEST;
+
+        if (!$this->is_configured()) {
+            return $is_editor_preview ? '<div class="rmd-wq-notice">' . esc_html__('WeatherQuery ist nicht konfiguriert. Bitte API-Zugangsdaten unter WeatherQuery → Konfiguration eintragen.', 'rmd-weatherquery') . '</div>' : '';
+        }
+        if (empty($a['stationId'])) {
+            return $is_editor_preview ? '<div class="rmd-wq-notice">' . esc_html__('Bitte in den Block-Einstellungen eine Station auswählen.', 'rmd-weatherquery') . '</div>' : '';
+        }
+
+        $fields = array_filter(array_map('sanitize_key', (array) $a['fields']));
+        $labels = array();
+        foreach ((array) $a['labels'] as $field => $label) {
+            if (is_string($label) && trim($label) !== '') {
+                $labels[sanitize_key($field)] = sanitize_text_field($label);
+            }
+        }
+
+        $icon_color = sanitize_hex_color($a['iconColor']);
+
+        $atts = array(
+            'mode' => $a['mode'] === 'historic' ? 'historic' : 'current',
+            'station_id' => (string) absint($a['stationId']),
+            'fields' => implode(',', $fields),
+            'api_key' => '',
+            'display_mode' => in_array($a['displayMode'], array('list', 'table', 'widget'), true) ? $a['displayMode'] : 'widget',
+            'show_icons' => $a['showIcons'] ? 'true' : 'false',
+            'icon_color' => $icon_color ? $icon_color : '#62C626',
+            'show_timestamp' => $a['showTimestamp'] ? 'true' : 'false',
+            'start_timestamp' => $a['startTimestamp'] ? (string) absint($a['startTimestamp']) : '',
+            'end_timestamp' => $a['endTimestamp'] ? (string) absint($a['endTimestamp']) : '',
+            'temperature_unit' => $a['temperatureUnit'] === 'fahrenheit' ? 'fahrenheit' : 'celsius',
+            'show_all_fields' => $a['showAllFields'] ? 'true' : 'false',
+            'labels' => $labels,
+            'columns' => min(6, absint($a['columns']))
+        );
+
+        $data = $this->get_weather_data_cached($atts, min(1440, absint($a['cacheMinutes'])));
+        $content = $data === false
+            ? '<div class="rmd-wq-error">' . esc_html__('Fehler beim Laden der Wetterdaten', 'rmd-weatherquery') . '</div>'
+            : $this->format_weather_data($data, $atts);
+
+        $title = '';
+        if (trim($a['title']) !== '') {
+            $level = min(6, max(2, absint($a['titleLevel'])));
+            $title = '<h' . $level . ' class="rmd-wq-title">' . esc_html($a['title']) . '</h' . $level . '>';
+        }
+
+        $classes = array();
+        if ($a['hideLabels']) {
+            $classes[] = 'rmd-wq-hide-labels';
+        }
+        if ($a['plainCards']) {
+            $classes[] = 'rmd-wq-cards-plain';
+        }
+        $wrapper_args = array('class' => implode(' ', $classes));
+        $card_bg = sanitize_hex_color($a['cardBackground']);
+        if ($card_bg) {
+            $wrapper_args['style'] = '--rmd-wq-card-bg: ' . $card_bg . ';';
+        }
+
+        return '<div ' . get_block_wrapper_attributes($wrapper_args) . '>' . $title . $content . '</div>';
+    }
+
     private function format_weather_data($data, $atts) {
         if (!$data || !isset($data['sensors'])) {
             return '<div class="rmd-wq-error">' . __('Keine Daten verfügbar', 'rmd-weatherquery') . '</div>';
@@ -1021,33 +1333,8 @@ class RMD_WeatherQuery {
             $fields = array_map('trim', $fields);
         }
 
-        // Collect all data first
         $weather_data = array();
-        $timestamp = null;
-
-        // Collect all available data first from all sensors
-        $all_readings = array();
-        foreach ($data['sensors'] as $sensor) {
-            if (!isset($sensor['data']) || !is_array($sensor['data'])) {
-                continue;
-            }
-
-            foreach ($sensor['data'] as $reading) {
-                // Extract timestamp from first reading
-                if ($timestamp === null && isset($reading['ts'])) {
-                    $timestamp = $reading['ts'];
-                }
-
-                // Merge all readings from different sensors - preserve all fields
-                foreach ($reading as $field_key => $field_value) {
-                    // Only add field if not already present (first occurrence wins)
-                    if (!array_key_exists($field_key, $all_readings)) {
-                        $all_readings[$field_key] = $field_value;
-                    }
-                }
-                break; // Only first reading per sensor for current mode
-            }
-        }
+        list($all_readings, $timestamp) = $this->collect_readings($data);
 
         // If show_all_fields is true, get weather-related fields from the data
         if (strtolower($atts['show_all_fields']) === 'true') {
@@ -1072,15 +1359,19 @@ class RMD_WeatherQuery {
             $actual_field = $this->map_field_name($field);
 
             if (isset($all_readings[$actual_field])) {
-                $label = $this->get_field_label($field); // Use original field name for label
+                $label = !empty($atts['labels'][$field]) ? $atts['labels'][$field] : $this->get_field_label($field);
                 $value = $this->format_field_value($field, $all_readings[$actual_field], $atts['temperature_unit']);
                 $icon = $this->get_field_icon($field);
-                $weather_data[] = array(
+                $item = array(
                     'field' => $field,
                     'label' => $label,
                     'value' => $value,
                     'icon' => $icon
                 );
+                if ($this->is_wind_direction_field($field) && is_numeric($all_readings[$actual_field])) {
+                    $item['degrees'] = (float) $all_readings[$actual_field];
+                }
+                $weather_data[] = $item;
             }
         }
 
@@ -1090,6 +1381,9 @@ class RMD_WeatherQuery {
         $data_attributes .= ' data-mode="' . esc_attr($atts['mode']) . '"';
         $data_attributes .= ' data-fields="' . esc_attr($atts['fields']) . '"';
         $data_attributes .= ' data-display-mode="' . esc_attr($atts['display_mode']) . '"';
+        if ($atts['display_mode'] === 'widget' && !empty($atts['columns'])) {
+            $data_attributes .= ' style="grid-template-columns: repeat(' . absint($atts['columns']) . ', minmax(0, 1fr));"';
+        }
 
         // Format output based on display mode
         $output = '';
@@ -1320,6 +1614,37 @@ class RMD_WeatherQuery {
         return in_array($field, $pressure_fields);
     }
 
+    private function is_wind_direction_field($field) {
+        return in_array($field, array('wind_dir', 'wind_dir_at_hi_speed', 'wind_dir_of_prevail', 'wind_gust_dir'), true);
+    }
+
+    /**
+     * Wind direction fields get an arrow pointing where the wind blows to:
+     * the reported degrees are where it comes from, so the up-arrow is turned by degrees + 180.
+     */
+    private function render_icon($item, $atts) {
+        if (strtolower($atts['show_icons']) !== 'true') {
+            return '';
+        }
+
+        $classes = 'wi ' . $item['icon'];
+        $styles = array();
+
+        if (!empty($atts['icon_color']) && $atts['icon_color'] !== '#62C626') {
+            $styles[] = 'color: ' . $atts['icon_color'];
+        }
+
+        if (isset($item['degrees'])) {
+            $classes = 'wi wi-direction-up rmd-wq-wind-arrow';
+            $rotation = (int) round(fmod($item['degrees'] + 180, 360));
+            $styles[] = 'transform: rotate(' . $rotation . 'deg)';
+        }
+
+        $style_attr = $styles ? ' style="' . esc_attr(implode('; ', $styles) . ';') . '"' : '';
+
+        return '<i class="' . esc_attr($classes) . '"' . $style_attr . '></i>';
+    }
+
     private function format_german_number($number, $decimals = 1) {
         // Format number with German locale (comma as decimal separator)
         return str_replace('.', ',', number_format($number, $decimals, '.', ''));
@@ -1451,13 +1776,9 @@ class RMD_WeatherQuery {
         $output .= '<ul>';
 
         foreach ($weather_data as $item) {
-            $icon_html = '';
-            if (strtolower($atts['show_icons']) === 'true') {
-                $icon_style = '';
-                if (!empty($atts['icon_color']) && $atts['icon_color'] !== '#62C626') {
-                    $icon_style = ' style="color: ' . esc_attr($atts['icon_color']) . ';"';
-                }
-                $icon_html = '<i class="wi ' . esc_attr($item['icon']) . '"' . $icon_style . '></i> ';
+            $icon_html = $this->render_icon($item, $atts);
+            if ($icon_html !== '') {
+                $icon_html .= ' ';
             }
             $output .= '<li>' . $icon_html . esc_html($item['label']) . ': ' . esc_html($item['value']) . '</li>';
         }
@@ -1487,16 +1808,8 @@ class RMD_WeatherQuery {
             $output .= '<tr>';
 
             // Messwert-Spalte mit optionalem Icon
-            $label_content = '';
-            if (strtolower($atts['show_icons']) === 'true') {
-                $icon_style = '';
-                if (!empty($atts['icon_color']) && $atts['icon_color'] !== '#62C626') {
-                    $icon_style = ' style="color: ' . esc_attr($atts['icon_color']) . ';"';
-                }
-                $label_content = '<i class="wi ' . esc_attr($item['icon']) . '"' . $icon_style . '></i> ' . esc_html($item['label']);
-            } else {
-                $label_content = esc_html($item['label']);
-            }
+            $icon_html = $this->render_icon($item, $atts);
+            $label_content = ($icon_html !== '' ? $icon_html . ' ' : '') . esc_html($item['label']);
 
             $output .= '<td>' . $label_content . '</td>';
             $output .= '<td>' . esc_html($item['value']) . '</td>';
@@ -1541,12 +1854,9 @@ class RMD_WeatherQuery {
         foreach ($weather_data as $item) {
             $output .= '<div class="rmd-wq-widget-item">';
 
-            if (strtolower($atts['show_icons']) === 'true') {
-                $icon_style = '';
-                if (!empty($atts['icon_color']) && $atts['icon_color'] !== '#62C626') {
-                    $icon_style = ' style="color: ' . esc_attr($atts['icon_color']) . ';"';
-                }
-                $output .= '<div class="rmd-wq-widget-icon"><i class="wi ' . esc_attr($item['icon']) . '"' . $icon_style . '></i></div>';
+            $icon_html = $this->render_icon($item, $atts);
+            if ($icon_html !== '') {
+                $output .= '<div class="rmd-wq-widget-icon">' . $icon_html . '</div>';
             }
 
             $output .= '<div class="rmd-wq-widget-content">';
