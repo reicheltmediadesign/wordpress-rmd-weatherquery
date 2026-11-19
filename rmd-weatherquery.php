@@ -3,7 +3,7 @@
  * Plugin Name: RMD WeatherQuery
  * Plugin URI: https://github.com/reicheltmediadesign/wordpress-rmd-weatherquery
  * Description: Ein professionelles WordPress Plugin zur Anzeige von Wetterdaten über die WeatherLink v2 API. Unterstützt multiple Darstellungsmodi (Liste, Tabelle, Widget), Wetter-Icons, deutsche Lokalisierung, Temperatur-/Druckumrechnung und intelligente Caching-Funktionen. Entwickelt unter Mitwirkung von Anthropic Claude.
- * Version: 1.4.0
+ * Version: 1.5.0
  * Requires at least: 6.3
  * Requires PHP: 7.4
  * Author: reichelt media.design
@@ -21,7 +21,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('RMD_WQ_VERSION', '1.4.0');
+define('RMD_WQ_VERSION', '1.5.0');
 define('RMD_WQ_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('RMD_WQ_PLUGIN_URL', plugin_dir_url(__FILE__));
 
