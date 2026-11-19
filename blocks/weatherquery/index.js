@@ -231,6 +231,18 @@
 					value: attributes.archiveDate,
 					onChange: function (value) { setAttributes({ archiveDate: value || '' }); }
 				}) : null,
+				attributes.archiveView === 'readings' ? el(c.SelectControl, {
+					__nextHasNoMarginBottom: true,
+					__next40pxDefaultSize: true,
+					label: __('Messungen', TEXT_DOMAIN),
+					help: __('Stündlich: erste Messung jeder Stunde, Niederschlag als Stundensumme.', TEXT_DOMAIN),
+					value: attributes.archiveResolution,
+					options: [
+						{ value: 'hourly', label: __('Stündlich', TEXT_DOMAIN) },
+						{ value: 'all', label: __('Alle Messungen', TEXT_DOMAIN) }
+					],
+					onChange: function (value) { setAttributes({ archiveResolution: value }); }
+				}) : null,
 				attributes.archiveView !== 'monthly' ? el(c.ToggleControl, {
 					__nextHasNoMarginBottom: true,
 					label: attributes.archiveView === 'readings'

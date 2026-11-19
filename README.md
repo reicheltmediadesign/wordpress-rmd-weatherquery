@@ -72,8 +72,9 @@ WP-Cron only runs when someone visits the site. For gapless recording, have an e
 | `days` | number of days up to today (`daily`, `chart`) | `30` |
 | `start_date`, `end_date` | `YYYY-MM-DD`, instead of `days` | – |
 | `date` | `YYYY-MM-DD` for `readings` | today |
+| `resolution` | `hourly` (first reading of each hour; rain as the hour's total, gusts and rain rate as the hour's highest value) or `all` (every reading) for `readings` | `hourly` |
 | `fields` | fields for `readings`: `temp`, `humidity`, `dew_point`, `pressure`, `wind_speed`, `wind_speed_avg`, `wind_gust`, `wind_dir`, `rainfall` (day total so far), `rain_15_min`, `rain_rate`, `solar_rad`, `uv_index` | `temp,humidity,pressure,wind_speed,wind_gust,wind_dir,rain_15_min` |
-| `selectable` | `true` lets visitors pick the period (`daily`, `chart`) or the day (`readings`) | `true` |
+| `selectable` | `true` lets visitors pick the period (`daily`, `chart`) or the day and hourly/all (`readings`) | `true` |
 | `show_icons`, `icon_color`, `temperature_unit` | as for `[wq]` | |
 
 Daily rain is the day's highest value of the station's own daily rain counter, so missing readings do not distort it.

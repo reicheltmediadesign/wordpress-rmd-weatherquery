@@ -14,6 +14,7 @@
 		"archiveView": { "type": "string", "enum": ["daily", "monthly", "readings", "chart"], "default": "daily" },
 		"archiveDays": { "type": "integer", "default": 30 },
 		"archiveDate": { "type": "string", "default": "" },
+		"archiveResolution": { "type": "string", "enum": ["hourly", "all"], "default": "hourly" },
 		"archiveSelectable": { "type": "boolean", "default": true },
 		"fields": { "type": "array", "items": { "type": "string" }, "default": ["temp", "humidity", "wind_speed", "wind_dir", "rainfall"] },
 		"showAllFields": { "type": "boolean", "default": false },

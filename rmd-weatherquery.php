@@ -808,6 +808,19 @@ $value_columns            created_at datetime DEFAULT CURRENT_TIMESTAMP,
                 line-height: 1;
                 padding: 0 6px;
             }
+            .rmd-wq-archive-resolution {
+                display: inline-flex;
+                flex-wrap: wrap;
+                gap: 4px 12px;
+            }
+            .rmd-wq-archive-resolution input {
+                margin: 0 4px 0 0;
+            }
+            .rmd-wq-archive-note {
+                margin-top: 8px;
+                color: #6c757d;
+                font-size: 0.85em;
+            }
             .rmd-wq-archive-range {
                 color: #6c757d;
                 font-size: 0.9em;
@@ -1424,6 +1437,7 @@ $value_columns            created_at datetime DEFAULT CURRENT_TIMESTAMP,
             'start_date' => '',
             'end_date' => '',
             'date' => '',
+            'resolution' => 'hourly',
             'fields' => '',
             'show_icons' => 'false',
             'icon_color' => '#62C626',
@@ -1673,14 +1687,22 @@ $value_columns            created_at datetime DEFAULT CURRENT_TIMESTAMP,
             return isset($available[$field]);
         }));
 
+        $resolution = isset($atts['resolution']) && $atts['resolution'] === 'all' ? 'all' : 'hourly';
+        if ($selectable && isset($_GET['wq_resolution']) && in_array($_GET['wq_resolution'], array('hourly', 'all'), true)) {
+            $resolution = $_GET['wq_resolution'];
+        }
+
         $rows = $wpdb->get_results($wpdb->prepare(
             "SELECT * FROM $table WHERE station_id = %d AND day = %s ORDER BY ts ASC",
             $station_id, $day
         ), ARRAY_A);
+        if ($resolution === 'hourly') {
+            $rows = $this->archive_hourly_rows($rows);
+        }
 
-        $output = '<div class="rmd-wq-data rmd-wq-archive rmd-wq-table" data-view="readings" data-station-id="' . esc_attr($station_id) . '">';
+        $output = '<div class="rmd-wq-data rmd-wq-archive rmd-wq-table" data-view="readings" data-resolution="' . esc_attr($resolution) . '" data-station-id="' . esc_attr($station_id) . '">';
         if ($selectable) {
-            $output .= $this->render_archive_day_form($day, $first_day, $today);
+            $output .= $this->render_archive_day_form($day, $first_day, $today, $resolution);
         }
 
         if (empty($rows) || empty($fields)) {
@@ -1689,7 +1711,8 @@ $value_columns            created_at datetime DEFAULT CURRENT_TIMESTAMP,
 
         $output .= '<table class="rmd-wq-weather-table"><thead><tr><th>' . esc_html__('Uhrzeit', 'rmd-weatherquery') . '</th>';
         foreach ($fields as $field) {
-            $output .= $this->archive_header_cell($field, $this->get_field_label($field), $atts);
+            $label = $resolution === 'hourly' && $field === 'rain_15_min' ? $this->get_field_label('rain_60_min') : $this->get_field_label($field);
+            $output .= $this->archive_header_cell($field, $label, $atts);
         }
         $output .= '</tr></thead><tbody>';
 
@@ -1700,8 +1723,48 @@ $value_columns            created_at datetime DEFAULT CURRENT_TIMESTAMP,
             }
             $output .= '</tr>';
         }
+        $output .= '</tbody></table>';
 
-        return $output . '</tbody></table></div>';
+        if ($resolution === 'hourly') {
+            $output .= '<p class="rmd-wq-archive-note">' . esc_html__('Werte der ersten Messung jeder Stunde. Niederschlag als Summe der Stunde, Böen und Regenrate als Höchstwert der Stunde.', 'rmd-weatherquery') . '</p>';
+        }
+
+        return $output . '</div>';
+    }
+
+    /**
+     * One row per hour: the hour's first reading, with interval values combined over the hour.
+     * Rain comes from the station's daily counter (independent of the reading interval),
+     * gusts and rain rate are the hour's highest value.
+     */
+    private function archive_hourly_rows($rows) {
+        $hours = array();
+        foreach ($rows as $row) {
+            $hour = wp_date('G', (int) $row['ts']);
+            if (!isset($hours[$hour])) {
+                $hours[$hour] = $row;
+                $hours[$hour]['rain_15'] = null;
+            }
+            foreach (array('wind_gust', 'rain_rate') as $column) {
+                if ($row[$column] !== null && ($hours[$hour][$column] === null || (float) $row[$column] > (float) $hours[$hour][$column])) {
+                    $hours[$hour][$column] = $row[$column];
+                }
+            }
+            if ($row['rain_day'] !== null) {
+                $hours[$hour]['rain_15'] = max((float) $hours[$hour]['rain_15'], (float) $row['rain_day']);
+            }
+        }
+
+        // Turn the daily counter at the end of each hour into the rain of that hour.
+        $rain_before = 0.0;
+        foreach ($hours as $hour => $row) {
+            if ($row['rain_15'] !== null) {
+                $total = $row['rain_15'];
+                $hours[$hour]['rain_15'] = max(0.0, $total - $rain_before);
+                $rain_before = max($rain_before, $total);
+            }
+        }
+        return array_values($hours);
     }
 
     private function render_archive_chart($station_id, $atts, $from, $to, $selectable) {
@@ -2131,20 +2194,28 @@ $value_columns            created_at datetime DEFAULT CURRENT_TIMESTAMP,
         return $output . '</form>';
     }
 
-    private function render_archive_day_form($day, $first_day, $today) {
+    /** @param string|null $resolution adds the hourly/all choice of the readings table when given */
+    private function render_archive_day_form($day, $first_day, $today, $resolution = null) {
         $prev = $day > $first_day
             ? wp_date('Y-m-d', strtotime($day . ' 12:00:00 UTC') - DAY_IN_SECONDS, new DateTimeZone('UTC')) : null;
         $next = $day < $today
             ? wp_date('Y-m-d', strtotime($day . ' 12:00:00 UTC') + DAY_IN_SECONDS, new DateTimeZone('UTC')) : null;
 
         $output = '<form class="rmd-wq-archive-controls" method="get">';
-        $output .= $this->archive_form_hidden_fields(array('wq_date'));
+        $output .= $this->archive_form_hidden_fields($resolution !== null ? array('wq_date', 'wq_resolution') : array('wq_date'));
         if ($prev) {
             $output .= '<a class="rmd-wq-archive-nav" href="' . esc_url(add_query_arg('wq_date', $prev)) . '" aria-label="' . esc_attr__('Vorheriger Tag', 'rmd-weatherquery') . '">‹</a>';
         }
         $output .= '<label>' . esc_html__('Tag', 'rmd-weatherquery') . ' <input type="date" name="wq_date" value="' . esc_attr($day) . '" min="' . esc_attr($first_day) . '" max="' . esc_attr($today) . '" onchange="this.form.submit()"></label>';
         if ($next) {
             $output .= '<a class="rmd-wq-archive-nav" href="' . esc_url(add_query_arg('wq_date', $next)) . '" aria-label="' . esc_attr__('Nächster Tag', 'rmd-weatherquery') . '">›</a>';
+        }
+        if ($resolution !== null) {
+            $output .= '<span class="rmd-wq-archive-resolution" role="radiogroup" aria-label="' . esc_attr__('Messungen', 'rmd-weatherquery') . '">';
+            foreach (array('hourly' => __('Stündlich', 'rmd-weatherquery'), 'all' => __('Alle Messungen', 'rmd-weatherquery')) as $value => $label) {
+                $output .= '<label><input type="radio" name="wq_resolution" value="' . esc_attr($value) . '"' . checked($resolution, $value, false) . ' onchange="this.form.submit()"> ' . esc_html($label) . '</label>';
+            }
+            $output .= '</span>';
         }
         $output .= '<noscript><button type="submit">' . esc_html__('Anzeigen', 'rmd-weatherquery') . '</button></noscript>';
         return $output . '</form>';
@@ -2555,6 +2626,7 @@ $value_columns            created_at datetime DEFAULT CURRENT_TIMESTAMP,
             'archiveView' => 'daily',
             'archiveDays' => 30,
             'archiveDate' => '',
+            'archiveResolution' => 'hourly',
             'archiveSelectable' => true,
             'title' => '',
             'titleLevel' => 3,
@@ -2611,6 +2683,7 @@ $value_columns            created_at datetime DEFAULT CURRENT_TIMESTAMP,
                 'start_date' => '',
                 'end_date' => '',
                 'date' => (string) $a['archiveDate'],
+                'resolution' => $a['archiveResolution'] === 'all' ? 'all' : 'hourly',
                 'fields' => $a['showAllFields'] ? '' : $atts['fields'],
                 'show_icons' => $atts['show_icons'],
                 'icon_color' => $atts['icon_color'],
