@@ -1,0 +1,34 @@
+{
+	"$schema": "https://schemas.wp.org/trunk/block.json",
+	"apiVersion": 3,
+	"name": "rmd-weatherquery/chart",
+	"title": "WeatherQuery Diagramm",
+	"category": "widgets",
+	"icon": "chart-line",
+	"description": "Diagramm aus dem eigenen Wetterarchiv: Einzelmessungen eines Tages oder Tageswerte eines Zeitraums, mit ein- und ausschaltbaren Messgrößen.",
+	"keywords": ["wetter", "weather", "diagramm", "chart", "archiv"],
+	"textdomain": "rmd-weatherquery",
+	"attributes": {
+		"stationId": { "type": "integer", "default": 0 },
+		"chartMode": { "type": "string", "enum": ["readings", "daily"], "default": "readings" },
+		"series": { "type": "array", "items": { "type": "string" }, "default": ["temp", "dew_point", "humidity", "pressure", "wind_speed", "wind_gust", "rain_15_min", "solar_rad"] },
+		"visibleSeries": { "type": "array", "items": { "type": "string" }, "default": ["temp", "humidity"] },
+		"days": { "type": "integer", "default": 30 },
+		"date": { "type": "string", "default": "" },
+		"selectable": { "type": "boolean", "default": true },
+		"toggles": { "type": "boolean", "default": true },
+		"temperatureUnit": { "type": "string", "enum": ["celsius", "fahrenheit"], "default": "celsius" },
+		"height": { "type": "integer", "default": 360 },
+		"title": { "type": "string", "default": "" },
+		"titleLevel": { "type": "integer", "default": 3 }
+	},
+	"supports": {
+		"html": false,
+		"align": ["wide", "full"],
+		"color": { "background": true, "text": true },
+		"spacing": { "margin": true, "padding": true },
+		"typography": { "fontSize": true }
+	},
+	"editorScript": "file:./index.js",
+	"style": "weather-icons"
+}
