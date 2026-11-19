@@ -5,6 +5,10 @@ All notable changes to this plugin are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Shortcode `[wq_chart]` and block “WeatherQuery Diagramm”: chart from the archive with series visitors can switch on and off. `mode="readings"` plots every reading of one day over the time of day, `mode="daily"` one value per day (min/max/mean temperature, rain, humidity, pressure, wind, gusts, solar radiation, UV index). Each unit gets its own y axis, shown only while one of its series is visible.
+
 ## [1.4.0] – 2026-11-18
 
 ### Added

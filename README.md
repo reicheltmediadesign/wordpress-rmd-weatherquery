@@ -7,6 +7,7 @@ WordPress plugin to show live weather data from Davis weather stations via the [
 - Shortcode `[wq]` for current or historic data of a station.
 - Shortcode `[wq_header]` for a compact one-line summary (temperature | rain | wind).
 - Own weather archive: readings are stored in the database and shown with `[wq_archive]` as daily values, monthly overview, single readings or chart – no WeatherLink Pro subscription needed.
+- Shortcode `[wq_chart]` and block for archive charts with series visitors can switch on and off.
 - Display as list, table or widget, optionally with weather icons and timestamp.
 - Conversion of temperature (°C/°F) and pressure units, German field labels.
 - Caching of API responses in its own database table, with refresh and clear in the admin.
@@ -77,6 +78,28 @@ WP-Cron only runs when someone visits the site. For gapless recording, have an e
 
 Daily rain is the day's highest value of the station's own daily rain counter, so missing readings do not distort it.
 
+### Archive chart
+
+```
+[wq_chart]
+[wq_chart date="2026-11-19" fields="temp,humidity,wind_gust,rain_15_min" visible="temp"]
+[wq_chart mode="daily" days="30" fields="temp_max,temp_min,rainfall,pressure" visible="temp_max,temp_min,rainfall"]
+```
+
+Above the chart there is one button per series to switch it on and off. Series without any value in the shown period are left out. Each unit (°C, %, hPa, km/h, mm, …) gets its own y axis, which is only shown while one of its series is visible.
+
+| Attribute | Values | Default |
+| --- | --- | --- |
+| `mode` | `readings` (every reading of one day, x axis = time of day), `daily` (one value per day) | `readings` |
+| `fields` | series that can be switched on, in this order. `readings`: `temp`, `dew_point`, `humidity`, `pressure`, `wind_speed`, `wind_speed_avg`, `wind_gust`, `wind_dir`, `rainfall` (day total so far), `rain_15_min`, `rain_rate`, `solar_rad`, `uv_index`. `daily`: `temp_max`, `temp_avg`, `temp_min`, `dew_point`, `humidity`, `pressure`, `wind_speed_avg`, `wind_gust`, `rainfall`, `rain_rate`, `solar_rad`, `uv_index` | `readings`: `temp,dew_point,humidity,pressure,wind_speed,wind_gust,rain_15_min,solar_rad`; `daily`: `temp_max,temp_avg,temp_min,rainfall,humidity,pressure,wind_gust` |
+| `visible` | series switched on when the page loads | `readings`: `temp,humidity`; `daily`: `temp_max,temp_avg,temp_min,rainfall` |
+| `toggles` | `false` replaces the buttons with the Chart.js legend (also clickable) | `true` |
+| `date` | `YYYY-MM-DD` for `readings` | today |
+| `days`, `start_date`, `end_date` | period for `daily`, as for `[wq_archive]` | `30` |
+| `selectable` | `true` lets visitors pick the day (`readings`) or the period (`daily`) | `true` |
+| `height` | chart height in px (200–800) | `360` |
+| `station_id`, `temperature_unit` | as for `[wq_archive]` | |
+
 ### Block
 
 The **WeatherQuery** block (category Widgets) offers everything the shortcode does in the block sidebar, with a live preview in the editor. The station is picked from a list and the field list shows only the fields the station actually delivers. On top of the shortcode it offers:
@@ -87,6 +110,8 @@ The **WeatherQuery** block (category Widgets) offers everything the shortcode do
 - block colours, spacing, font size and wide/full alignment
 - caching of the weather data per block (default 5 minutes)
 - mode “Archiv” with the same views as `[wq_archive]`
+
+The **WeatherQuery Diagramm** block offers `[wq_chart]` with a checkbox list of series and, per series, whether it is visible when the page loads. The editor preview shows the buttons; the chart itself is drawn on the page.
 
 Requires WordPress 6.3 or newer.
 
