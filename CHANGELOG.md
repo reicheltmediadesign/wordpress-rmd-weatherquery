@@ -5,6 +5,8 @@ All notable changes to this plugin are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.6.0] – 2026-11-19
+
 ### Added
 
 - Single readings of a day (`[wq_archive view="readings"]`, block view “Einzelmessungen eines Tages”) can be shown hourly or complete. Visitors switch between “Stündlich” and “Alle Messungen”; the attribute `resolution` (`hourly`, `all`) and the block option “Messungen” set the default. The hourly table shows the first reading of each hour, rain as the hour's total and gusts and rain rate as the hour's highest value.
